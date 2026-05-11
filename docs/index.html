@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>aqobs 视觉方案 - 全新迭代</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap');
+        body { font-family: 'Space Grotesk', sans-serif; background-color: #0f172a; color: white; }
+        .design-card {
+            background: rgba(30, 41, 59, 0.5);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .design-card:hover {
+            border-color: rgba(56, 189, 248, 0.5);
+            transform: translateY(-10px);
+        }
+    </style>
+</head>
+<body class="p-8 md:p-16">
+    <div class="max-w-6xl mx-auto">
+        <header class="mb-16">
+            <h1 class="text-5xl font-bold tracking-tight mb-4">aqobs <span class="text-sky-400">Concept V3</span></h1>
+            <p class="text-slate-400 text-xl">打破陈规，探索更具品牌辨识度的空气质量观测视觉标识。</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            
+            <!-- 方案 A: 垂直光谱 -->
+            <div class="design-card rounded-[2.5rem] p-10 flex flex-col items-center">
+                <div class="w-48 h-48 mb-8 flex items-center justify-center">
+                    <svg width="120" height="120" viewBox="0 0 200 200">
+                        <defs>
+                            <linearGradient id="spec_grad" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stop-color="#38bdf8" />
+                                <stop offset="100%" stop-color="#818cf8" />
+                            </linearGradient>
+                        </defs>
+                        <!-- 阶梯光谱线 -->
+                        <rect x="40" y="80" width="20" height="40" rx="10" fill="#38bdf8" />
+                        <rect x="70" y="60" width="20" height="80" rx="10" fill="#60a5fa" />
+                        <rect x="100" y="40" width="20" height="120" rx="10" fill="#818cf8" />
+                        <rect x="130" y="70" width="20" height="60" rx="10" fill="#a78bfa" />
+                        <!-- 观测横线 -->
+                        <path d="M30 100 H170" stroke="white" stroke-width="4" stroke-dasharray="8 8" opacity="0.3" />
+                    </svg>
+                </div>
+                <h3 class="text-2xl font-bold mb-3">垂直光谱</h3>
+                <p class="text-slate-400 text-sm text-center leading-relaxed">利用不同高度的色块模拟数据采集，象征从地面到大气的全方位监测。极具专业分析感。</p>
+            </div>
+
+            <!-- 方案 B: 负空间气流 -->
+            <div class="design-card rounded-[2.5rem] p-10 flex flex-col items-center">
+                <div class="w-48 h-48 mb-8 flex items-center justify-center">
+                    <svg width="120" height="120" viewBox="0 0 200 200">
+                        <!-- 外框 -->
+                        <rect x="40" y="40" width="120" height="120" rx="30" fill="#1e293b" stroke="#38bdf8" stroke-width="2"/>
+                        <!-- 负空间气流 (S形流动) -->
+                        <path d="M40 100 Q100 40 160 100 Q100 160 40 100" fill="#38bdf8" />
+                        <!-- 核心观测点 -->
+                        <circle cx="100" cy="100" r="15" fill="#0f172a" />
+                        <circle cx="100" cy="100" r="6" fill="white" />
+                    </svg>
+                </div>
+                <h3 class="text-2xl font-bold mb-3">风之立方</h3>
+                <p class="text-slate-400 text-sm text-center leading-relaxed">坚固的方块代表稳定的观测站，中心流动的负空间形状代表被捕捉到的气流，冲突感带来极高辨识度。</p>
+            </div>
+
+            <!-- 方案 C: 数据视窗 -->
+            <div class="design-card rounded-[2.5rem] p-10 flex flex-col items-center">
+                <div class="w-48 h-48 mb-8 flex items-center justify-center">
+                    <svg width="120" height="120" viewBox="0 0 200 200">
+                        <!-- 扫描光圈 -->
+                        <circle cx="100" cy="100" r="80" stroke="#334155" stroke-width="2" />
+                        <circle cx="100" cy="100" r="50" stroke="#38bdf8" stroke-width="4" stroke-dasharray="10 5" />
+                        <!-- 内部波动线 -->
+                        <path d="M60 100 L80 100 L90 80 L110 120 L120 100 L140 100" stroke="#38bdf8" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" />
+                        <!-- 扫描亮点 -->
+                        <circle cx="100" cy="100" r="4" fill="white shadow-lg">
+                            <animate attributeName="opacity" values="1;0.3;1" dur="2s" repeatCount="indefinite" />
+                        </circle>
+                    </svg>
+                </div>
+                <h3 class="text-2xl font-bold mb-3">数据视窗</h3>
+                <p class="text-slate-400 text-sm text-center leading-relaxed">结合雷达与脉冲波形，直接传达“实时观测”和“高精度数据”的核心卖点，极简且硬核。</p>
+            </div>
+
+        </div>
+
+        <!-- 品牌呈现效果展示 -->
+        <div class="mt-20 p-16 rounded-[4rem] bg-gradient-to-br from-slate-800 to-slate-900 border border-white/5 text-center">
+            <h4 class="text-sky-500 text-sm font-bold uppercase tracking-[0.5em] mb-12">aqobs 最终视觉应用预览</h4>
+            
+            <div class="flex flex-col md:flex-row justify-center items-center gap-20">
+                <!-- 方案 B 的文字组合展示 -->
+                <div class="flex items-center gap-8">
+                    <div class="w-20 h-20 bg-sky-500 rounded-2xl flex items-center justify-center shadow-[0_0_40px_rgba(14,165,233,0.3)]">
+                        <svg width="50" height="50" viewBox="0 0 200 200">
+                            <path d="M40 100 Q100 40 160 100 Q100 160 40 100" fill="white" />
+                            <circle cx="100" cy="100" r="15" fill="#0ea5e9" />
+                        </svg>
+                    </div>
+                    <div class="text-left">
+                        <h2 class="text-6xl font-bold tracking-tighter">aqobs</h2>
+                        <p class="text-slate-500 font-medium tracking-widest uppercase text-xs mt-2">Professional Air Quality Observatory</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-20 grid grid-cols-1 md:grid-cols-2 gap-10">
+                <div class="bg-white/5 rounded-3xl p-8 text-left border border-white/5">
+                    <div class="text-sky-400 font-bold mb-2">应用场景：App Icon</div>
+                    <p class="text-slate-400 text-sm">方案 B 这种高对比度的色块设计，在手机屏幕复杂的壁纸上也能清晰跳脱出来。</p>
+                </div>
+                <div class="bg-white/5 rounded-3xl p-8 text-left border border-white/5">
+                    <div class="text-sky-400 font-bold mb-2">应用场景：网页 Header</div>
+                    <p class="text-slate-400 text-sm">极简的图形配上现代的 Space Grotesk 字体，能给用户留下“这是一家高科技监测公司”的第一印象。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
