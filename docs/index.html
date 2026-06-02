@@ -27,8 +27,8 @@
     </script>
 
     <!-- 引入 MapLibre GL JS 样式与脚本 -->
-    <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
     <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
     <style>
         html, body {
             margin: 0;
@@ -82,7 +82,7 @@
 
     <div id="loader">
         <div class="spinner"></div>
-        <span>正在载入高精度地图...</span>
+        <span>正在载入地图...</span>
     </div>
     
     <div id="map"></div>
@@ -177,21 +177,69 @@
                 style: 'https://tiles.openfreemap.org/styles/liberty', 
                 center: [finalLon, finalLat],
                 zoom: finalZoom,
+                precision: 'lowp',
                 // cooperativeGestures 设为 false，滚轮直接触发缩放 (类似 Google Earth)，无需按住 Ctrl 键
                 cooperativeGestures: false, 
-                attributionControl: false // 保持极简页面，不渲染多余控件
+                attributionControl: false, // 保持极简页面，不渲染多余控件
+                // antialias: false, // 关闭抗锯齿不能使画面流畅
+                localIdeographFontFamily: 'sans-serif'
             });
 
-            // 4. 地图加载完成后，隐藏加载动画提示
+            // 4. 使用 styledata 事件，确保在样式渲染前就完成拦截
+            map.on('styledata', () => {
+                const layers = map.getStyle().layers;
+
+                // 在循环外预编译正则表达式，避免重复创建
+                // i 表示忽略大小写
+                const secretReg = /country|state|province|capital|admin|boundary|continent/i;
+                const placeReg = /place|settlement|water|waterway|river|stream|canal|lake|natural|island|marine|poi|road|path|building|landuse/i;
+                const districtReg = /city|town|village|hamlet|suburb|neighbourhood/i;
+
+                layers.forEach((layer) => {
+                    const id = layer.id;
+
+                    // 彻底切断所有“国家(Country)”和“省份/州(State)”图层
+                    if (secretReg.test(id)) {
+                        map.setLayoutProperty(id, 'visibility', 'none');
+                        return;
+                    }
+
+                    // 对所有城市/地名标注 (Symbol) 进行强制统一化改造
+                    if (layer.type === 'symbol') {
+
+                        // --- 强行统一城镇文字内容：只留中文，去掉英文和拼音 ---
+                        if (placeReg.test(id) || districtReg.test(id)) {
+                            // 使用 coalesce 确保：有中文显示中文，没中文显示空，绝不显示默认的英文/拼音名
+                            map.setLayoutProperty(id, 'text-field', ['coalesce', ['get', 'name:zh'], ['get', 'name']]);
+                        }
+
+                        // --- 弯度太大的路就不标名字了，省算力 ---
+                        if (id.includes('road') || id.includes('highway') || id.includes('path')) {
+                            map.setLayoutProperty(id, 'text-max-angle', 30);
+                        }
+
+                        // --- 强行统一字体和字重：去掉加粗 ---
+                        map.setLayoutProperty(id, 'text-font', ['Noto Sans Regular']);
+
+                        // --- 性能优化：降低标注碰撞检测频率 ---
+                        map.setLayoutProperty(id, 'text-padding', 7);
+                        map.setLayoutProperty(id, 'text-allow-overlap', false);
+                        map.setLayoutProperty(id, 'text-ignore-placement', false);
+                    }
+                });
+            });
+
+            // 5. 地图加载完成后，隐藏加载动画提示
             map.on('load', () => {
+                // 隐藏加载动画
                 const loader = document.getElementById('loader');
                 if (loader) {
                     loader.style.opacity = '0';
-                    setTimeout(() => loader.remove(), 300);
+                    setTimeout(() => loader.remove(), 200);
                 }
             });
 
-            // 5. 绑定拖动和缩放事件，实时更新 URL，便于分享
+            // 6. 绑定拖动和缩放事件，实时更新 URL，便于分享
             function updateURL() {
                 const center = map.getCenter();
                 const currentZoom = map.getZoom();
