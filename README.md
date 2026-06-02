@@ -3,7 +3,7 @@ higher resolution air quality map
 
 网址 aqobs.com = www.aqobs.com
 
-示例 www.aqobs.com/?lat=30.12&lon=120.43&scale=23.33
+示例 www.aqobs.com/?lat=30.33&lon=120.43&scale=13.33
 
 你可以直接修改中心点坐标 lat=北纬 lon=东经 scale=比例尺
 
