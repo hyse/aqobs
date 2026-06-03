@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <link rel="icon" type="image/png" href="qbicon.png" sizes="32x32">
+    <link rel="icon" type="image/png" href="./assets/qbicon.png" sizes="32x32">
     <title>aqobs :: hi-res air quality map</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     
@@ -27,8 +27,9 @@
     </script>
 
     <!-- 引入 MapLibre GL JS 样式与脚本 -->
-    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-    <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+    <link href="./lib/maplibre-gl.css" rel="stylesheet" />
+    <script src="./lib/maplibre-gl.js"></script>
+    <script src="./lib/sql-wasm.js"></script>
     <style>
         html, body {
             margin: 0;
