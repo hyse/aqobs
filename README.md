@@ -16,3 +16,5 @@ higher resolution air quality map
 目前激烈 vibe coding
 
 因水平有限，某些对主要功能影响甚微的 bug 将长期维持原状，比如北京市、温州市等名称无法显示
+
+沟槽的 GFW！！！
