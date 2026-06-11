@@ -193,8 +193,8 @@
                 // 在循环外预编译正则表达式，避免重复创建
                 // i 表示忽略大小写
                 const secretReg = /country|state|province|capital|admin|boundary|continent/i;
-                const placeReg = /place|settlement|water|waterway|river|stream|canal|lake|natural|island|marine|poi|road|path|building|landuse/i;
-                const districtReg = /city|town|village|hamlet|suburb|neighbourhood/i;
+                const placeReg = /place|settlement|water|waterway|river|stream|canal|lake|natural|island|marine|poi|building/i;
+                const districtReg = /city|town|township|subdistrict|village|hamlet|suburb|neighbourhood/i;
 
                 layers.forEach((layer) => {
                     const id = layer.id;
