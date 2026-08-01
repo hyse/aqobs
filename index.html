@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <link rel="icon" type="image/png" href="./assets/qbicon.png" sizes="32x32">
+    <title>aqobs :: 空气质量地图 | 全国实时 AQI</title>
+    <meta name="description" content="实时监测各级站点空气质量指数 AQI、PM2.5、PM10、O3 等污染物数据，提供城市排行与一周内历史回放。">
+    <meta name="keywords" content="空气质量地图,AQI,空气质量指数,PM2.5,PM10,O3,臭氧,空气质量,空气污染,实时监控,环境观测">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <script>
+        try {
+            Object.defineProperty(window, 'parent', { get: () => window, configurable: true });
+            Object.defineProperty(window, 'top', { get: () => window, configurable: true });
+        } catch (e) { console.warn("Security Bypass Override:", e); }
+    </script>
+    
+    <link href="./lib/maplibre-gl.css" rel="stylesheet" />
+    <script src="./lib/maplibre-gl.js"></script>
+    <script src="./lib/getdata.js"></script>
+
+    <style>
+        :root {
+            --bg-glass: rgba(255, 255, 255, 0.95);
+            --border-color: #d1d5db;
+            --text-main: #111827;
+            --accent-color: #2563eb;
+        }
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; height: 100%; }
+
+        #map, .maplibregl-canvas {
+        outline: none !important;
+        -webkit-tap-highlight-color: rgba(0,0,0,0); /* 顺便移除移动端点击时的蓝色高亮块 */
+        }
+        
+        /* 强力全屏阻断加载指示器 */
+        #loader {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(243, 244, 246, 0.95); display: flex; flex-direction: column;
+            align-items: center; justify-content: center; z-index: 9999; transition: opacity 0.3s ease;
+        }
+        .spinner { width: 40px; height: 40px; border: 4px solid #e5e7eb; border-top-color: var(--accent-color); border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 12px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #loader-text { font-size: 14px; color: #4b5563; font-weight: 500; }
+
+        /* 统一表单样式 */
+        select, button {
+            background: white; border: 1px solid var(--border-color); border-radius: 6px;
+            padding: 5px 10px; font-size: 13px; color: var(--text-main); outline: none; cursor: pointer;
+            white-space: nowrap; flex-shrink: 0; /* 防止文字折行挤压 */
+        }
+        select:focus, button:hover { border-color: var(--accent-color); }
+
+        /* 底部中央参数控制架构 */
+        #control-panel {
+            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            display: flex; flex-direction: column; gap: 8px; z-index: 999; pointer-events: auto;
+            max-width: 95vw;
+        }
+        .panel-row { display: flex; align-items: center; justify-content: center; gap: 6px; background: var(--bg-glass); padding: 6px 12px; border-radius: 6px; box-shadow: 0 4px 15px rgba(0,0,0,0.15); white-space: nowrap; }
+
+        /* 移动端极小屏幕优化 */
+        @media (max-width: 480px) {
+            .panel-row { gap: 3px; padding: 4px 6px; }
+            select, button, #time-display-box { padding: 4px 6px; font-size: 12px; }
+        }
+
+        #time-display-box { font-weight: bold; min-width: 65px; text-align: center; cursor: pointer; border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 8px; font-size: 13px; background: #f9fafb; user-select: none; }
+        #time-display-box.history-mode { color: #dc2626; background: #fef2f2; border-color: #fca5a5; }
+        #time-display-box { position: relative; }
+        #time-display-box::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 125%; /* 浮现于时间框的正上方 */
+            left: 50%;
+            transform: translateX(-50%);
+            background: #f3f4f6f2; /* 优雅的浅白半透明背景 */
+            color: #1f2937; /* 柔和的深灰字 */
+            padding: 5px 9px;
+            font-size: 12px;
+            font-weight: normal;
+            border-radius: 6px;
+            white-space: nowrap;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); /* 柔和阴影 */
+            pointer-events: none; /* 穿透鼠标，防止引发抖动 */
+            z-index: 9999;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.2s ease, visibility 0.2s ease;
+            transition-delay: 0s; /* 鼠标移开时延迟为0秒，立刻消失不粘人 */
+        }
+
+        #time-display-box:hover::after {
+            opacity: 1;
+            visibility: visible;
+            transition-delay: 1s; /* 核心控制：鼠标移入并停留满 1s 后才显示 */
+        }
+
+        /* 时间选择复合体组件 */
+        .time-select-wrapper { position: relative; display: inline-block; }
+        #time-dropdown-container {
+            position: absolute; bottom: 105%; left: 0; background: white;
+            border: 1px solid var(--border-color); border-radius: 4px; box-shadow: 0 -4px 15px rgba(0,0,0,0.15);
+            max-height: 240px; overflow-y: auto; display: none; z-index: 1000;
+        }
+        .time-drop-item { display: flex; justify-content: space-between; padding: 6px 12px; font-size: 12px; cursor: pointer; border-bottom: 1px solid #f3f4f6; }
+        .time-drop-item:hover, .time-drop-item.active { background-color: #eff6ff; font-weight: bold; color: var(--accent-color); }
+        .time-drop-item .time-ago { color: #9ca3af; margin-left: 15px; }
+
+        /* 历史控制轴组件 */
+        .slider-container { display: flex; align-items: center; gap: 6px; width: 100%; position: relative; }
+        .nav-btn { font-weight: bold; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; padding: 0; user-select: none; }
+        
+        #timeline-axis-wrapper { position: relative; flex-grow: 1; height: 32px; background: #f3f4f6; border: 1px solid var(--border-color); border-radius: 4px; overflow: visible; }
+        .timeline-tick { position: absolute; bottom: 0; width: 1px; height: 6px; background: #6b7280; }
+        .timeline-tick.midnight { height: 12px; background: #111827; width: 2px; }
+        .timeline-label { position: absolute; top: 1px; font-size: 9px; color: #111827; transform: translateX(-50%); font-weight: bold; pointer-events: none; }
+
+        /* 严格 60° 直角梯形游标（下底右对齐刻度） */
+        #timeline-cursor {
+            position: absolute; top: 0;
+            background: rgba(37, 99, 235, 0.9);
+            transform: translateX(-100%); /* 下底（右侧边）正对刻度线 */
+            cursor: grab; z-index: 10;
+        }
+        #timeline-cursor:active { cursor: grabbing; background: rgba(29, 78, 216, 1); }
+
+        /* 地图站点标记渲染形态 */
+        .station-marker { display: flex; align-items: center; justify-content: center; cursor: pointer; }
+        /* 优化后的地图站点文字标签 */
+        .station-node {
+            display: flex; align-items: center; justify-content: center;
+            color: white; font-weight: 700; font-size: 13px; letter-spacing: -0.5px; line-height: 1;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            position: relative; user-select: none; 
+            transition: border-radius 0.15s ease; /* 视图切换时形状平滑过渡 */
+            text-shadow: 0 0 1px rgba(0, 0, 0, 0.2);
+        }
+        .ring-canvas { position: absolute; top: -4px; left: -4px; pointer-events: none; }
+        .empty-station { border-radius: 50%; background: transparent; display: flex; align-items: center; justify-content: center; box-sizing: border-box; }
+
+        /* Tooltip 详细看板面板 */
+        .aqobs-popup-panel { font-family: sans-serif; color: var(--text-main); width: 230px; font-size: 12px; }
+        .pop-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+        .pop-title { font-size: 13px; font-weight: bold; color: #000; }
+        .pop-level { font-size: 10px; color: #4b5563; background: #e5e7eb; padding: 1px 4px; border-radius: 3px; font-weight: bold; }
+        .pop-badge { padding: 1px 5px; border-radius: 3px; color: white; font-weight: bold; display: inline-block; min-width: 24px; text-align: center; }
+
+        /* 右上角多标签信息盒子 */
+        #info-trigger {
+            position: absolute; top: 12px; right: 12px; width: 30px; height: 30px;
+            border-radius: 50%; background: var(--bg-glass); display: flex; align-items: center;
+            justify-content: center; font-weight: bold; font-size: 16px; font-family: serif;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 999; cursor: pointer; border: 1px solid var(--border-color); user-select: none;
+        }
+        #info-modal {
+            position: absolute; top: 52px; right: 12px; width: 310px; background: var(--bg-glass);
+            border-radius: 6px; border: 1px solid var(--border-color); box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+            display: none; flex-direction: column; z-index: 999; overflow: hidden;
+        }
+        .modal-tabs { display: flex; background: #f3f4f6; border-bottom: 1px solid var(--border-color); }
+        .modal-tab { flex-grow: 1; text-align: center; padding: 6px 0; font-size: 11px; cursor: pointer; color: #4b5563; user-select: none; }
+        .modal-tab.active { background: white; color: black; font-weight: bold; border-top: 2px solid var(--accent-color); }
+        .modal-body { padding: 12px; font-size: 12px; color: #374151; max-height: 260px; overflow-y: auto; line-height: 1.4; }
+    </style>
+</head>
+<body>
+    <div id="loader">
+        <div class="spinner"></div>
+        <span id="loader-text">初始化底图引擎与基础设施...</span>
+    </div>
+    
+    <div id="map"></div>
+    <div id="info-trigger">i</div>
+    
+    <div id="info-modal">
+        <div class="modal-tabs">
+            <div class="modal-tab active" onclick="switchTab(0)">概述</div>
+            <div class="modal-tab" onclick="switchTab(1)">CN 标准</div>
+            <div class="modal-tab" onclick="switchTab(2)">US 标准</div>
+            <div class="modal-tab" onclick="switchTab(3)">数据源</div>
+            <div class="modal-tab" onclick="switchTab(4)">快捷键</div>
+            <div class="modal-tab" onclick="switchTab(5)">关于</div>
+        </div>
+        <div id="modal-content" class="modal-body">载入中...</div>
+    </div>
+
+    <div id="control-panel">
+        <div class="panel-row" id="upper-control-row" style="display: none;">
+            <div class="slider-container">
+                <button class="nav-btn" id="btn-prev">&lt;</button>
+                <div id="timeline-axis-wrapper">
+                    <div id="timeline-cursor"></div>
+                </div>
+                <button class="nav-btn" id="btn-next">&gt;</button>
+            </div>
+        </div>
+        <div class="panel-row" id="lower-control-row">
+            <select id="pol-select">
+                <option value="co">CO</option>
+                <option value="so2">SO2</option>
+                <option value="no2">NO2</option>
+                <option value="o3">O3</option>
+                <option value="pm25">PM2.5</option>
+                <option value="pm10">PM10</option>
+                <option value="aqi">AQI</option>
+            </select>
+            <select id="aqi-select"></select>
+            <div id="time-display-box">--:--</div>
+            <div class="time-select-wrapper">
+                <button id="time-select-btn">时间选择</button>
+                <div id="time-dropdown-container"></div>
+            </div>
+        </div>
+    </div>
+    <script src="./main.js"></script>
+</body>
+</html>

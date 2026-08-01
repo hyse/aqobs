@@ -1,0 +1,951 @@
+// 核心运行状态管理机
+const STATE = {
+    regions: [],    // 存储 regions.json 数据
+    stations: [],   // 存储 stations.json 转换后的站点
+    aqiRules: [],
+    activeRule: null,
+    isHistory: false,
+    currentTimestamp: null,
+    timeTimelineList: [],
+    markerInstances: [],    // 保留，我们将主要使用下面的 markerMap
+    markerMap: new Map(),   // 【新增：用于 O(1) 级站点 Marker 内存复用映射】
+    hourlyCache: new Map(), // 新增：用于缓存当前整点从小端 CDN 拉回来的中括号时序记录
+    playInterval: null,
+    urlParams: { lat: null, lon: null, scale: null, level: '111', pol: 'aqi', aqi: 'us' }
+};
+
+// 【新增】全局弹窗生命周期管理
+let activePopup = null; 
+let isPopupPinned = false; // 是否被用户点击固定住
+
+function closeAllPopups() {
+    if (activePopup) {
+        activePopup.remove();
+        activePopup = null;
+    }
+    isPopupPinned = false;
+}
+
+const polList = ['co', 'so2', 'no2', 'o3', 'pm25', 'pm10', 'aqi'];
+
+let map;
+
+// 根据短边计算50km自适应缩放比
+function calculateZoomFor50Km(lat) {
+    const shortEdge = Math.min(window.innerWidth, window.innerHeight);
+    const latRad = lat * Math.PI / 180;
+    return Math.max(0, Math.min(22, Math.log2((shortEdge * 40075016.686 * Math.cos(latRad)) / (512 * 50000))));
+}
+
+// 解析并接管本地URL参数
+function parseURLQuery() {
+    const params = new URLSearchParams(window.location.search);
+    STATE.urlParams.lat = params.get('lat') ? parseFloat(params.get('lat')) : null;
+    STATE.urlParams.lon = params.get('lon') ? parseFloat(params.get('lon')) : null;
+    STATE.urlParams.scale = params.get('scale') ? parseFloat(params.get('scale')) : null;
+    STATE.urlParams.level = params.get('level') || '111';
+    STATE.urlParams.pol = params.get('pol') || 'aqi';
+    STATE.urlParams.aqi = params.get('aqi') || '';
+    let past = parseInt(params.get('past')) || 75;
+    STATE.urlParams.past = Math.max(1, Math.min(180, past));
+}
+
+function pushStateToURL() {
+    const center = map.getCenter();
+    const zoom = map.getZoom();
+    const newUrl = `${window.location.origin}${window.location.pathname}?lat=${center.lat.toFixed(6)}&lon=${center.lng.toFixed(6)}&scale=${zoom.toFixed(2)}&level=${STATE.urlParams.level}&pol=${STATE.urlParams.pol}&aqi=${STATE.urlParams.aqi}&past=${STATE.urlParams.past}`;
+    window.history.replaceState(null, '', newUrl);
+}
+
+// 全周期初始化驱动
+async function applicationMain() {
+    try {
+        parseURLQuery();
+        
+        // 1. 优先加载并清洗标准配置资产 json
+        document.getElementById('loader-text').innerText = "加载空气质量算法标准规则配置...";
+        const aqiRes = await fetch('./assets/aqi.json');
+        STATE.aqiRules = await aqiRes.json();
+        
+        const aqiSelect = document.getElementById('aqi-select');
+        aqiSelect.innerHTML = '';
+        // 照任务书要求：配置顺序从前到后对应下拉框由下到上反向渲染
+        [...STATE.aqiRules].reverse().forEach(rule => {
+            const opt = document.createElement('option');
+            opt.value = rule.code;
+            opt.innerText = rule.name.toUpperCase();
+            aqiSelect.appendChild(opt);
+        });
+
+        if (!STATE.urlParams.aqi) {
+            STATE.urlParams.aqi = STATE.aqiRules[0].code; // 默认采用第一条规则
+        }
+        aqiSelect.value = STATE.urlParams.aqi;
+        STATE.activeRule = STATE.aqiRules.find(r => r.code === STATE.urlParams.aqi) || STATE.aqiRules[0];
+
+        // ======= 彻底移除 SQL.js，改为纯静态 JSON 加载 =======
+        document.getElementById('loader-text').innerText = "正在从边缘节点同步站点与区域网格...";
+        
+        // 并行拉取公共静态数据
+        const [regionsRes, stationsRes] = await Promise.all([
+            fetch('./public/regions.json'),
+            fetch('./public/stations.json')
+        ]);
+        
+        const rawRegions = await regionsRes.json();
+        const rawStations = await stationsRes.json();
+
+        // 完美适配并录入 regions.json 的中括号结构
+        // 对应索引：[RegionCode, RegionName, RegionShort, RegionABBR, LatitudeX1e7, LongitudeX1e7]
+        STATE.regions = rawRegions.map(v => ({
+            code: v[0],
+            name: v[1],
+            short: v[2],
+            abbr: v[3],
+            lat: v[4] !== null ? v[4] / 1e7 : null,
+            lon: v[5] !== null ? v[5] / 1e7 : null
+        }));
+
+        // 完美适配并录入 stations.json 中括号结构
+        // 对应索引：[StationID, StationName, StationLevel, RegionCode, LatitudeX1e7, LongitudeX1e7]
+        STATE.stations = rawStations.map(v => ({
+            id: v[0], 
+            name: v[1], 
+            level: v[2], 
+            lat: v[4] / 1e7, 
+            lon: v[5] / 1e7
+        }));
+
+        // 根据 URL 参数直接在内存中构建等距整点时间轴
+        const currentHourFloor = Math.floor(Date.now() / 1000 / 3600) * 3600;
+        STATE.timeTimelineList = [];
+        for (let i = STATE.urlParams.past; i >= 0; i--) {
+            STATE.timeTimelineList.push(currentHourFloor - i * 3600);
+        }
+
+        // 3. 地图渲染管线接管
+        document.getElementById('loader-text').innerText = "配置矢量瓦片图层渲染通道...";
+        let startLat = STATE.urlParams.lat || 34.3415;
+        let startLon = STATE.urlParams.lon || 108.9404;
+        let startZoom = STATE.urlParams.scale || calculateZoomFor50Km(startLat);
+
+        // 若URL未传坐标则通过公网网关做缺省本地化定位
+        if (STATE.urlParams.lat === null) {
+            try {
+                const geo = await fetch('https://ipapi.co/json/').then(r => r.json());
+                if (geo.latitude && geo.longitude) {
+                    startLat = geo.latitude; startLon = geo.longitude;
+                    if (STATE.urlParams.scale === null) startZoom = calculateZoomFor50Km(startLat);
+                }
+            } catch(e) {}
+        }
+
+        map = new maplibregl.Map({
+            container: 'map',
+            style: 'https://tiles.openfreemap.org/styles/liberty',
+            center: [startLon, startLat],
+            zoom: startZoom,
+            precision: 'lowp',
+            // cooperativeGestures 设为 false，滚轮直接触发缩放 (类似 Google Earth)，无需按住 Ctrl 键
+            cooperativeGestures: false,
+            attributionControl: false,
+            // antialias: false, // 关闭抗锯齿不能使画面流畅
+            localIdeographFontFamily: 'sans-serif'
+        });
+
+        // 优雅过滤掉行政边界与干扰标签
+        map.on('style.load', () => {
+            const layers = map.getStyle().layers;
+
+            // 在循环外预编译正则表达式，避免重复创建
+            const secretReg = /country|state|province|capital|admin|boundary|continent/i;
+            const placeReg = /place|settlement|water|waterway|river|stream|canal|lake|natural|island|marine|poi|building/i;
+            const districtReg = /city|town|township|subdistrict|village|hamlet|suburb|neighbourhood/i;
+
+            layers.forEach((layer) => {
+                const id = layer.id;
+
+                // 彻底切断所有“国家(Country)”和“省份/州(State)”图层
+                if (secretReg.test(id)) {
+                    map.setLayoutProperty(id, 'visibility', 'none');
+                    return;
+                }
+
+                // 对所有城市/地名标注 (Symbol) 进行强制统一化改造
+                if (layer.type === 'symbol') {
+
+                    // --- 强行统一城镇文字内容：只留中文，去掉英文和拼音 ---
+                    if (placeReg.test(id) || districtReg.test(id)) {
+                        // 使用 coalesce 确保：有中文显示中文，没中文显示空，绝不显示默认的英文/拼音名
+                        map.setLayoutProperty(id, 'text-field', ['coalesce', ['get', 'name:zh'], ['get', 'name']]);
+                    }
+
+                    // --- 弯度太大的路就不标名字了，省算力 ---
+                    if (id.includes('road') || id.includes('highway') || id.includes('path')) {
+                        map.setLayoutProperty(id, 'text-max-angle', 30);
+                    }
+
+                    // --- 强行统一字体和字重：去掉加粗 ---
+                    map.setLayoutProperty(id, 'text-font', ['Noto Sans Regular']);
+
+                    // --- 性能优化：降低标注碰撞检测频率 ---
+                    map.setLayoutProperty(id, 'text-padding', 7);
+                    map.setLayoutProperty(id, 'text-allow-overlap', false);
+                    map.setLayoutProperty(id, 'text-ignore-placement', false);
+                }
+            });
+        });
+
+        map.on('moveend', pushStateToURL);
+        map.on('zoomend', pushStateToURL);
+
+        map.on('click', () => {
+            closeAllPopups();
+        });
+
+        if (STATE.urlParams.scale === null) {
+            window.addEventListener('resize', () => {
+                map.setZoom(calculateZoomFor50Km(map.getCenter().lat));
+            });
+        }
+
+        // 4. 驱动UI结构、绑定全局硬件设备中断事件
+        buildTimeDropdownDOM();
+        setupShortcutEvents();
+
+        if (STATE.timeTimelineList.length > 0) {
+            const latestTs = STATE.timeTimelineList[STATE.timeTimelineList.length - 1];
+            await window.loadHourlyDataFromServer(latestTs);
+        }
+
+        syncUIStateAndURL();
+        renderMapMarkers();
+
+        // 关闭阻断加载界面
+        const loader = document.getElementById('loader');
+        loader.style.opacity = '0';
+        setTimeout(() => loader.remove(), 300);
+
+    } catch (err) {
+        console.error(err);
+        document.getElementById('loader-text').innerText = `致命错误: ${err.message}。请检查 docs/lib/ 目录下依赖是否完整。`;
+    }
+}
+
+// 精密分段线性内插分值算法引擎
+function calcSingleIaqi(polType, value, rule) {
+    if (value === null || value === undefined || isNaN(value)) return null;
+    const polConfig = rule.pollutants[polType];
+    if (!polConfig) return null;
+
+    const bp = polConfig.bp;
+    const aqiScale = polConfig.aqi;
+
+    for (let i = 0; i < bp.length - 1; i++) {
+        if (value >= bp[i] && value <= bp[i+1]) {
+            return Math.round(((aqiScale[i+1] - aqiScale[i]) / (bp[i+1] - bp[i])) * (value - bp[i]) + aqiScale[i]);
+        }
+    }
+    // 超出高位边界时的延长线外推机制
+    const len = bp.length;
+    if (value > bp[len-1]) {
+        const slope = (aqiScale[len-1] - aqiScale[len-2]) / (bp[len-1] - bp[len-2]);
+        return Math.round(aqiScale[len-1] + slope * (value - bp[len-1]));
+    }
+    return 0;
+}
+
+// 动态现场聚合计算复合站点的多要素最大 AQI
+function getStationCalculatedAqi(dbRow, rule) {
+    let maxAqi = 0;
+    let hasValidData = false;
+    ['co', 'so2', 'no2', 'o3', 'pm25', 'pm10'].forEach(key => {
+        let val = dbRow[key];
+        if (val !== null && val !== undefined) {
+            if (key === 'co') val = val / 1000; // 算法内插前将 CO 升阶换算为 mg/m3
+            const iaqi = calcSingleIaqi(key, val, rule);
+            if (iaqi > maxAqi) maxAqi = iaqi;
+            hasValidData = true;
+        }
+    });
+    return hasValidData ? maxAqi : null;
+}
+
+// 获取对应分级标准的级别颜色 definition
+function getColorAndLabel(polType, value, rule) {
+    let aqiValue = value;
+    // 如果传入的不是最终的AQI，先计算对应的分项IAQI值
+    if (polType !== 'aqi') {
+        aqiValue = calcSingleIaqi(polType, value, rule) || 0;
+    }
+    const levels = rule.aqi_levels;
+    for (let i = 0; i < levels.length; i++) {
+        if (aqiValue >= levels[i].min && aqiValue <= levels[i].max) {
+            return { color: `rgb(${levels[i].color.join(',')})`, label: levels[i].label };
+        }
+    }
+    // 兜底外推最高阶颜色
+    return { color: `rgb(${levels[levels.length-1].color.join(',')})`, label: levels[levels.length-1].label };
+}
+
+// 构造时间整点回溯下拉选单
+function buildTimeDropdownDOM() {
+    const container = document.getElementById('time-dropdown-container');
+    container.innerHTML = '';
+    
+    const currentHourFloor = Math.floor(Date.now() / 1000 / 3600) * 3600;
+    const historyOrderList = [...STATE.timeTimelineList].reverse(); // 自下而上反向，最上面是最早的数据
+
+    historyOrderList.forEach(ts => {
+        const date = new Date(ts * 1000);
+        const hh = String(date.getHours()).padStart(2, '0') + ':00';
+        const hoursAgo = Math.floor((currentHourFloor - ts) / 3600);
+
+        const item = document.createElement('div');
+        item.className = 'time-drop-item';
+        item.dataset.ts = ts;
+        item.innerHTML = `<span>${hh}</span><span class="time-ago">${hoursAgo}</span>`;
+        
+        item.onclick = (e) => {
+            e.stopPropagation();
+            enterHistoryView(ts);
+            container.style.display = 'none';
+        };
+        container.appendChild(item);
+    });
+
+    buildTimeSliderTicks();
+}
+
+// 绘制历史时间标尺刻度（像素级绝对对齐，彻底消除粗细不一）
+function buildTimeSliderTicks() {
+    const wrapper = document.getElementById('timeline-axis-wrapper');
+    wrapper.querySelectorAll('.timeline-tick, .timeline-label').forEach(el => el.remove());
+    if (STATE.timeTimelineList.length === 0) return;
+
+    const minTs = STATE.timeTimelineList[0];
+    const maxTs = STATE.timeTimelineList[STATE.timeTimelineList.length - 1];
+    const span = maxTs - minTs || 1;
+    const wrapperWidth = wrapper.clientWidth || 300;
+
+    STATE.timeTimelineList.forEach(ts => {
+        const percent = (ts - minTs) / span;
+        // 计算精确整数像素，避免亚像素抗锯齿导致的粗细不一
+        const pxLeft = Math.round(percent * wrapperWidth);
+        const d = new Date(ts * 1000);
+        const isMidnight = d.getHours() === 0;
+
+        const tick = document.createElement('div');
+        tick.className = `timeline-tick ${isMidnight ? 'midnight' : ''}`;
+        
+        // 普通 1px 刻度居正点，2px 午夜刻度左移 1px 实现物理网格对齐
+        tick.style.left = isMidnight ? `${pxLeft - 1}px` : `${pxLeft}px`;
+        wrapper.appendChild(tick);
+
+        if (isMidnight) {
+            const label = document.createElement('div');
+            label.className = 'timeline-label';
+            label.style.left = `${pxLeft}px`;
+            label.innerText = `${d.getDate()}日`;
+            wrapper.appendChild(label);
+        }
+    });
+
+    setupSliderDragLogic();
+}
+
+// 像素级梯形时间游标拖拽及吸附逻辑
+function setupSliderDragLogic() {
+    const cursor = document.getElementById('timeline-cursor');
+    const wrapper = document.getElementById('timeline-axis-wrapper');
+    let dragging = false;
+    let lastRenderTime = 0; // 用于节流的时间戳看门狗
+
+    function processMove(clientX) {
+        const rect = wrapper.getBoundingClientRect();
+        let pct = (clientX - rect.left) / rect.width;
+        pct = Math.max(0, Math.min(1, pct));
+
+        const minTs = STATE.timeTimelineList[0];
+        const maxTs = STATE.timeTimelineList[STATE.timeTimelineList.length - 1];
+        const targetTs = minTs + pct * (maxTs - minTs);
+
+        // 二分查找或最近吸附算法
+        let closest = STATE.timeTimelineList[0];
+        let diff = Math.abs(targetTs - closest);
+        for (let i = 1; i < STATE.timeTimelineList.length; i++) {
+            let d = Math.abs(targetTs - STATE.timeTimelineList[i]);
+            if (d < diff) { diff = d; closest = STATE.timeTimelineList[i]; }
+        }
+        
+        // 限制高频拖拽引发的过度渲染锁
+        if (closest !== STATE.currentTimestamp) {
+            const now = Date.now();
+            if (now - lastRenderTime > 60 || closest !== STATE.currentTimestamp) {
+                lastRenderTime = now;
+                enterHistoryView(closest);
+            }
+        }
+    }
+
+    cursor.onmousedown = (e) => { e.stopPropagation(); dragging = true; };
+    window.addEventListener('mousemove', (e) => { if (dragging) processMove(e.clientX); });
+    window.addEventListener('mouseup', () => { dragging = false; });
+    wrapper.onmousedown = (e) => { if (e.target !== cursor) processMove(e.clientX); };
+}
+
+// 双向视图状态控制器
+async function enterHistoryView(ts) {
+    STATE.isHistory = true;
+    STATE.currentTimestamp = ts;
+    document.getElementById('upper-control-row').style.display = 'flex';
+    buildTimeSliderTicks();
+    document.getElementById('time-display-box').classList.add('history-mode');
+    syncUIStateAndURL();
+    
+    // 渲染前，先去 CDN 把这个时间戳的 JSON 拉回来
+    await loadHourlyDataFromServer(ts);
+    renderMapMarkers();
+}
+
+async function enterRealtimeView() {
+    STATE.isHistory = false;
+    stopAutoPlay();
+    document.getElementById('upper-control-row').style.display = 'none';
+    document.getElementById('time-display-box').classList.remove('history-mode');
+    syncUIStateAndURL();
+    
+    // 实时视角下，拉取时间轴上最新的一个整点数据
+    const latestTs = STATE.timeTimelineList[STATE.timeTimelineList.length - 1];
+    await loadHourlyDataFromServer(latestTs);
+    renderMapMarkers();
+}
+
+// 参数同步到 DOM 与 URL 状态
+function syncUIStateAndURL() {
+    document.getElementById('pol-select').value = STATE.urlParams.pol;
+    document.getElementById('aqi-select').value = STATE.urlParams.aqi;
+
+    const timeBox = document.getElementById('time-display-box');
+    if (!STATE.isHistory) {
+        const d = new Date();
+        timeBox.innerText = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+        timeBox.setAttribute('data-tooltip', `${d.getDate()}日${d.getHours()}时`);
+    } else {
+        const d = new Date(STATE.currentTimestamp * 1000);
+        timeBox.innerText = `${String(d.getHours()).padStart(2,'0')}:00`;
+        timeBox.setAttribute('data-tooltip', `${d.getDate()}日${d.getHours()}时`);
+
+        // 刷新游标（直角梯形：下底正对当前时间刻度，尖角刚好触及最高刻度线顶端，斜腰夹角 60°）
+        const wrapper = document.getElementById('timeline-axis-wrapper');
+        const minTs = STATE.timeTimelineList[0];
+        const maxTs = STATE.timeTimelineList[STATE.timeTimelineList.length - 1];
+        const spanHours = STATE.timeTimelineList.length - 1 || 1;
+        const axisWidth = wrapper.clientWidth || 300;
+        const axisHeight = wrapper.clientHeight || 32;
+        
+        const hourWidthPx = axisWidth / spanHours; // 1 小时像素宽度（垂直腰长度）
+        const midnightTickHeight = 12;             // 最高刻度线高度 (px)
+        
+        // 游标右侧下底高度：从顶部向下延伸，刚好碰到最高刻度线的顶端
+        const h2 = Math.max(10, axisHeight - midnightTickHeight); 
+
+        // 依据 60° 几何夹角计算上底（左侧）高度: (h2 - h1) = hourWidth / tan(60°) = hourWidth / sqrt(3)
+        const diffPx = hourWidthPx / Math.sqrt(3);
+        const h1 = Math.max(0, h2 - diffPx);
+        const topBasePct = (h1 / h2) * 100;
+
+        const pct = ((STATE.currentTimestamp - minTs) / (maxTs - minTs || 1)) * 100;
+        const cursor = document.getElementById('timeline-cursor');
+        
+        cursor.style.width = `${hourWidthPx}px`;
+        cursor.style.height = `${h2}px`;
+        cursor.style.left = `${pct}%`;
+        cursor.style.transform = 'translateX(-100%)'; // 下底（右侧边）精确对齐当前时间刻度
+        cursor.style.clipPath = `polygon(0 0, 100% 0, 100% 100%, 0 ${topBasePct}%)`;
+        cursor.title = `${d.getDate()}日${d.getHours()}时`;
+    }
+
+    // 同步下拉框的高亮定位
+    document.querySelectorAll('.time-drop-item').forEach(item => {
+        const ts = parseInt(item.dataset.ts);
+        if (STATE.isHistory && ts === STATE.currentTimestamp) {
+            item.classList.add('active');
+        } else {
+            item.classList.remove('active');
+        }
+    });
+
+    // 动态检查对齐上下层组件线宽
+    const polEl = document.getElementById('pol-select');
+    const selBtn = document.getElementById('time-select-btn');
+    const upperRow = document.getElementById('upper-control-row');
+    if (upperRow.style.display !== 'none') {
+        const leftPos = polEl.getBoundingClientRect().left;
+        const rightPos = selBtn.getBoundingClientRect().right;
+        upperRow.style.width = `${rightPos - leftPos}px`;
+    }
+
+    pushStateToURL();
+}
+
+// 常规组件的联动改变响应
+document.getElementById('pol-select').onchange = (e) => { 
+    STATE.urlParams.pol = e.target.value; 
+    syncUIStateAndURL(); 
+    renderMapMarkers(); 
+    e.target.blur(); // 选择完成后立即清除焦点高亮
+};
+document.getElementById('aqi-select').onchange = (e) => {
+    STATE.urlParams.aqi = e.target.value;
+    STATE.activeRule = STATE.aqiRules.find(r => r.code === STATE.urlParams.aqi);
+    syncUIStateAndURL(); 
+    renderMapMarkers(); 
+    e.target.blur(); // 选择完成后立即清除焦点高亮
+};
+document.getElementById('time-display-box').onclick = () => enterRealtimeView();
+
+const triggerBtn = document.getElementById('time-select-btn');
+const dropBox = document.getElementById('time-dropdown-container');
+triggerBtn.onclick = (e) => {
+    e.stopPropagation();
+    const isOpen = dropBox.style.display === 'block';
+    dropBox.style.display = isOpen ? 'none' : 'block';
+    if (!isOpen) {
+        const boxLeft = document.getElementById('time-display-box').getBoundingClientRect().left;
+        const btnRight = triggerBtn.getBoundingClientRect().right;
+        dropBox.style.width = `${btnRight - boxLeft}px`;
+    }
+};
+document.addEventListener('click', () => { dropBox.style.display = 'none'; });
+
+// 长按自动放映循环机制驱动
+function startAutoPlay(direction) {
+    stopAutoPlay();
+    if (!STATE.isHistory) {
+        enterHistoryView(STATE.timeTimelineList[STATE.timeTimelineList.length - 1]);
+    }
+    STATE.playInterval = setInterval(() => {
+        let idx = STATE.timeTimelineList.indexOf(STATE.currentTimestamp);
+        if (direction === 'forward') {
+            idx = (idx + 1) % STATE.timeTimelineList.length;
+        } else {
+            idx = (idx - 1 + STATE.timeTimelineList.length) % STATE.timeTimelineList.length;
+        }
+        enterHistoryView(STATE.timeTimelineList[idx]);
+    }, 1500);
+}
+
+function stopAutoPlay() {
+    if (STATE.playInterval) { clearInterval(STATE.playInterval); STATE.playInterval = null; }
+}
+
+// 按键前后移动核心步进方法
+function stepTime(isForward) {
+    if (STATE.timeTimelineList.length === 0) return;
+    let idx = STATE.timeTimelineList.indexOf(STATE.currentTimestamp);
+    if (idx === -1) {
+        idx = STATE.timeTimelineList.length - 1;
+    } else {
+        if (isForward) {
+            idx = (idx + 1) % STATE.timeTimelineList.length;
+        } else {
+            idx = (idx - 1 + STATE.timeTimelineList.length) % STATE.timeTimelineList.length;
+        }
+    }
+    enterHistoryView(STATE.timeTimelineList[idx]);
+}
+
+// 全球全域硬件设备键盘事件映射机
+function setupShortcutEvents() {
+    let keyTimers = {};
+
+    window.addEventListener('keydown', (e) => {
+        const activeTag = document.activeElement.tagName.toLowerCase();
+        if (activeTag === 'input' || activeTag === 'select') return;
+        
+        const k = e.key.toUpperCase();
+        if (keyTimers[k]) return; // 防止系统原生打字机连发副作用
+
+        if (k === 'W') {
+            e.preventDefault();
+            let idx = polList.indexOf(STATE.urlParams.pol);
+            STATE.urlParams.pol = polList[(idx - 1 + polList.length) % polList.length];
+            syncUIStateAndURL(); renderMapMarkers();
+        }
+        if (k === 'S') {
+            e.preventDefault();
+            let idx = polList.indexOf(STATE.urlParams.pol);
+            STATE.urlParams.pol = polList[(idx + 1) % polList.length];
+            syncUIStateAndURL(); renderMapMarkers();
+        }
+        if (k === 'Q') {
+            e.preventDefault();
+            let idx = STATE.aqiRules.findIndex(r => r.code === STATE.urlParams.aqi);
+            STATE.urlParams.aqi = STATE.aqiRules[(idx - 1 + STATE.aqiRules.length) % STATE.aqiRules.length].code;
+            STATE.activeRule = STATE.aqiRules.find(r => r.code === STATE.urlParams.aqi);
+            syncUIStateAndURL(); renderMapMarkers();
+        }
+        if (k === 'E') {
+            e.preventDefault();
+            let idx = STATE.aqiRules.findIndex(r => r.code === STATE.urlParams.aqi);
+            STATE.urlParams.aqi = STATE.aqiRules[(idx + 1) % STATE.aqiRules.length].code;
+            STATE.activeRule = STATE.aqiRules.find(r => r.code === STATE.urlParams.aqi);
+            syncUIStateAndURL(); renderMapMarkers();
+        }
+        if (k === 'R') { e.preventDefault(); enterRealtimeView(); }
+        if (k === 'T') { e.preventDefault(); triggerBtn.click(); }
+        if (k === 'I') { e.preventDefault(); toggleInfoPanel(); }
+
+        if (k === 'A') {
+            e.preventDefault();
+            stepTime(false);
+            keyTimers[k] = setTimeout(() => startAutoPlay('backward'), 500);
+        }
+        if (k === 'D') {
+            e.preventDefault();
+            stepTime(true);
+            keyTimers[k] = setTimeout(() => startAutoPlay('forward'), 500);
+        }
+    });
+
+    window.addEventListener('keyup', (e) => {
+        const k = e.key.toUpperCase();
+        if (k === 'A' || k === 'D') {
+            clearTimeout(keyTimers[k]);
+            delete keyTimers[k];
+            stopAutoPlay();
+        }
+    });
+
+    // 鼠标指针层级的 A / D 与后退、前进键功能整合绑定
+    let mouseTimer;
+    const btnPrev = document.getElementById('btn-prev');
+    const btnNext = document.getElementById('btn-next');
+
+    btnPrev.onmousedown = () => { stepTime(false); mouseTimer = setTimeout(() => startAutoPlay('backward'), 500); };
+    btnPrev.onmouseup = btnPrev.onmouseleave = () => { clearTimeout(mouseTimer); stopPlaybackHelper(); };
+    
+    btnNext.onmousedown = () => { stepTime(true); mouseTimer = setTimeout(() => startAutoPlay('forward'), 500); };
+    btnNext.onmouseup = btnNext.onmouseleave = () => { clearTimeout(mouseTimer); stopPlaybackHelper(); };
+    
+    function stopPlaybackHelper() { stopAutoPlay(); }
+}
+
+// 智能色彩对比度感知工具函数
+function getTextColorForBackground(colorStr) {
+    if (!colorStr) return '#ffffff';
+    let r, g, b;
+    
+    if (colorStr.startsWith('rgb')) {
+        const match = colorStr.match(/\d+/g);
+        if (match) {
+            r = parseInt(match[0], 10);
+            g = parseInt(match[1], 10);
+            b = parseInt(match[2], 10);
+        }
+    } else {
+        let hex = colorStr.replace('#', '');
+        if (hex.length === 3) {
+            hex = hex.split('').map(c => c + c).join('');
+        }
+        r = parseInt(hex.substring(0, 2), 16);
+        g = parseInt(hex.substring(2, 4), 16);
+        b = parseInt(hex.substring(4, 6), 16);
+    }
+    
+    if (isNaN(r) || isNaN(g) || isNaN(b)) return '#ffffff';
+
+    const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+    return brightness > 170 ? '#727272' : '#ffffff';
+}
+
+// 高动态位掩码过滤与 Canvas 站点标记控制系统
+function renderMapMarkers() {
+    closeAllPopups();
+
+    STATE.markerInstances.forEach(m => m.remove());
+    STATE.markerInstances = [];
+
+    const mask = STATE.urlParams.level;
+    const currentSystemSec = Math.floor(Date.now() / 1000);
+    const recordMap = STATE.hourlyCache;
+
+    STATE.stations.forEach(st => {
+        let visible = false;
+        if (st.level === '国控' && mask[0] === '1') visible = true;
+        if (st.level === '省控' && mask[1] === '1') visible = true;
+        if (st.level !== '国控' && st.level !== '省控' && mask[2] === '1') visible = true;
+        if (mask === '000') visible = true;
+
+        if (!visible) return;
+
+        const containerEl = document.createElement('div');
+        containerEl.className = 'station-marker';
+        let matchedRecord = null;
+
+        if (mask === '000') {
+            const size = st.level === '国控' ? 14 : 12;
+            containerEl.className = 'empty-station';
+            containerEl.style.width = `${size}px`;
+            containerEl.style.height = `${size}px`;
+            containerEl.style.borderColor = '#1f2937';
+            
+            if (st.level === '国控') {
+                containerEl.style.borderWidth = '3.3px'; containerEl.style.borderStyle = 'solid';
+            } else if (st.level === '省控') {
+                containerEl.style.borderWidth = '4px'; containerEl.style.borderStyle = 'double';
+            } else {
+                containerEl.style.borderWidth = '1.4px'; containerEl.style.borderStyle = 'solid';
+            }
+            bindPopupEvents(containerEl, st, null);
+        } else {
+            matchedRecord = recordMap.get(st.id);
+            if (!matchedRecord) return; 
+
+            if (!STATE.isHistory && STATE.urlParams.pol !== 'aqi') {
+                if (matchedRecord[STATE.urlParams.pol] === null || matchedRecord[STATE.urlParams.pol] === undefined) return;
+            }
+
+            let nodeValue = '';
+            let rawVal = 0;
+            let hexColor = '#9ca3af';
+
+            if (STATE.urlParams.pol === 'aqi') {
+                rawVal = getStationCalculatedAqi(matchedRecord, STATE.activeRule);
+                if (rawVal === null) return;
+                nodeValue = rawVal;
+            } else {
+                rawVal = matchedRecord[STATE.urlParams.pol];
+                if (rawVal === null) return;
+                
+                if (STATE.urlParams.pol === 'co') {
+                    rawVal = rawVal / 1000; // 毫克换算
+                    nodeValue = rawVal.toFixed(1);
+                } else {
+                    nodeValue = Math.round(rawVal);
+                }
+            }
+            hexColor = getColorAndLabel(STATE.urlParams.pol, rawVal, STATE.activeRule).color;
+
+            const node = document.createElement('div');
+            node.className = 'station-node';
+
+            node.style.display = 'flex';           // 核心修正：从 inline-flex 改为 flex，消除绝对定位的水平挤压
+            node.style.alignItems = 'center';      // 文字垂直居中
+            node.style.justifyContent = 'center';    // 文字水平居中
+            node.style.position = 'relative';       // 为 Canvas 提供绝对定位父级锚点
+            node.style.boxSizing = 'border-box';
+            node.style.padding = '0';               // 强行清空任何可能继承自全局的内边距
+            node.style.margin = '0';                // 强行清空任何可能继承自全局的外边距
+            node.style.lineHeight = '1';            // 核心修正：强制行高为 1，消除数字因字体基线留白导致的视觉上偏
+            node.style.textAlign = 'center';
+            node.style.whiteSpace = 'nowrap';
+            
+            if (!STATE.isHistory) {
+                node.style.width = '24px';
+                node.style.height = '24px';
+                node.style.borderRadius = '50%';
+                node.style.fontSize = '13px';
+            } else {
+                node.style.width = '24px';
+                node.style.height = '16px';
+                node.style.borderRadius = '4px';
+                node.style.fontSize = '12px';
+            }
+            
+            node.style.backgroundColor = hexColor;
+            node.style.color = getTextColorForBackground(hexColor);
+            
+            node.innerText = nodeValue;
+            containerEl.appendChild(node);
+
+            if (!STATE.isHistory) {
+                const ageSeconds = currentSystemSec - matchedRecord.unixTime;
+                if (ageSeconds <= 3600) {
+                    const canvas = document.createElement('canvas');
+                    canvas.className = 'ring-canvas';
+                    canvas.width = 32; canvas.height = 32;
+
+                    canvas.style.position = 'absolute';
+                    canvas.style.top = '50%';
+                    canvas.style.left = '50%';
+                    canvas.style.transform = 'translate(-50%, -50%)'; // 完美的几何质心对齐
+                    canvas.style.pointerEvents = 'none';              // 穿透鼠标事件，防止阻挡点击
+
+                    const ctx = canvas.getContext('2d');
+                    const ratio = 1 - (ageSeconds / 3600);
+
+                    ctx.clearRect(0, 0, 32, 32);
+                    
+                    const RING_COLOR = '#202020';
+                    ctx.strokeStyle = RING_COLOR;
+
+                    const cx = 16, cy = 16;
+                    const startAngle = -Math.PI / 2;
+                    const endAngle = (-Math.PI / 2) + (Math.PI * 2 * ratio);
+
+                    if (st.level === '国控') {
+                        ctx.lineWidth = 2.6;
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, 14, startAngle, endAngle);
+                        ctx.stroke();
+                    } 
+                    else if (st.level === '省控') {
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, 14.3, startAngle, endAngle);
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, 12, startAngle, endAngle);
+                        ctx.stroke();
+                    } 
+                    else {
+                        ctx.lineWidth = 1.2;
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, 14, startAngle, endAngle);
+                        ctx.stroke();
+                    }
+
+                    node.appendChild(canvas);
+                } else if (ageSeconds > 3600 && ageSeconds <= 7200) {
+                    const opacity = 1 - ((ageSeconds - 3600) / 3600);
+                    containerEl.style.opacity = opacity;
+                } else {
+                    return;
+                }
+            }
+            bindPopupEvents(containerEl, st, matchedRecord);
+        }
+
+        const marker = new maplibregl.Marker({ element: containerEl, anchor: 'center' })
+            .setLngLat([st.lon, st.lat])
+            .addTo(map);
+        STATE.markerInstances.push(marker);
+    });
+}
+
+// 多指标聚合看板 Tooltip 引擎
+function bindPopupEvents(el, station, record) {
+    let popupInstance = null;
+
+    const buildContent = () => {
+        const div = document.createElement('div');
+        div.className = 'aqobs-popup-panel';
+
+        if (!record) {
+            div.innerHTML = `<div class="pop-row"><span class="pop-title">${station.name}</span><span class="pop-level">${station.level}</span></div>`;
+            return div;
+        }
+
+        const d = new Date(record.unixTime * 1000); // 已修复：UnixTime -> unixTime
+        const finalAqi = getStationCalculatedAqi(record, STATE.activeRule);
+        const aqiBg = getColorAndLabel('aqi', finalAqi, STATE.activeRule).color;
+        const aqiTextColor = getTextColorForBackground(aqiBg); 
+
+        // 简化 Badge 创建逻辑，直接对齐小写属性
+        const createBadge = (pType) => {
+            let v = record[pType]; 
+            if (v === null || v === undefined) return `<span style="color:#9ca3af">--</span>`;
+            if (pType === 'co') {
+                v = (v / 1000).toFixed(1);
+            } else {
+                v = Math.round(v);
+            }
+            const bg = getColorAndLabel(pType, v, STATE.activeRule).color;
+            const badgeTextColor = getTextColorForBackground(bg); 
+            return `<span class="pop-badge" style="background:${bg}; color:${badgeTextColor}">${v}</span>`;
+        };
+
+        div.innerHTML = `
+            <div class="pop-row"><span class="pop-title">${station.name}</span><span class="pop-level">${station.level}</span></div>
+            <div class="pop-row">
+                <span>AQI<sub>${STATE.urlParams.aqi.toUpperCase()}</sub>: <span class="pop-badge" style="background:${aqiBg}; color:${aqiTextColor}">${finalAqi}</span></span>
+                <span style="color:#4b5563; font-weight:500;">${d.getMonth()+1}月${d.getDate()}日 ${String(d.getHours()).padStart(2,'0')}:00</span>
+            </div>
+            <hr style="border:0; border-top:1px solid #e5e7eb; margin:5px 0;"/>
+            <div class="pop-row"><span>PM2.5: ${createBadge('pm25')}</span><span>PM10: ${createBadge('pm10')}</span></div>
+            <div class="pop-row"><span>O3: ${createBadge('o3')}</span><span>NO2: ${createBadge('no2')}</span></div>
+            <div class="pop-row"><span>SO2: ${createBadge('so2')}</span><span>CO: ${createBadge('co')}</span></div>
+        `;
+        return div;
+    };
+
+    const show = () => {
+        if (isPopupPinned) return; // 如果已被用户点击固定，忽略 hover
+        
+        // 销毁旧的
+        if (activePopup) activePopup.remove();
+
+        activePopup = new maplibregl.Popup({ 
+            offset: 12, 
+            closeButton: false, 
+            closeOnClick: false 
+        })
+        .setLngLat([station.lon, station.lat])
+        .setDOMContent(buildContent()) // 这里继续用你原来的函数
+        .addTo(map);
+    };
+
+    // 绑定鼠标悬停事件 (桌面端体验)
+    el.addEventListener('mouseenter', show);
+    el.addEventListener('mouseleave', () => {
+        if (!isPopupPinned) closeAllPopups(); // 只有没被固定时才允许自动消失
+    });
+
+    // 绑定点击事件 (适配手机端)
+    el.addEventListener('click', (e) => {
+        e.stopPropagation(); // 防止点击冒泡到地图导致立即关闭
+        
+        if (isPopupPinned) {
+            // 已固定状态下再次点击，关闭弹窗
+            closeAllPopups();
+        } else {
+            // 进入固定模式
+            isPopupPinned = true;
+            show();
+        }
+    });
+}
+
+// 右上角信息控制面板
+const infoModal = document.getElementById('info-modal');
+function toggleInfoPanel() {
+    const isClosed = infoModal.style.display !== 'flex';
+    infoModal.style.display = isClosed ? 'flex' : 'none';
+    if (isClosed) switchTab(0);
+}
+
+document.getElementById('info-trigger').onclick = (e) => { e.stopPropagation(); toggleInfoPanel(); };
+infoModal.onclick = (e) => e.stopPropagation();
+document.addEventListener('click', () => { infoModal.style.display = 'none'; });
+
+const helpTexts = [
+    "<h4>aqobs 观测系统概述</h4><p>本平台依托高效率 WebAssembly 容器本地解析时序 SQLite 关系库，无需依赖高延迟后端集群即可在前端完成全量环境要素空间差值图层解析与历史演化放映。</p>",
+    "<h4>中国国家标准 (GB 3095-2012)</h4><p>内置标准分段多级线性内插算法。系统能自动识别 CO 要素的量纲差异，并在运算前将其从微克自动升阶换算为毫克。</p>",
+    "<h4>美国 EPA 空气质量规范</h4><p>契合美标分段浓度阶梯函数。针对特定颗粒物在低浓度边界的健康响应进行了针对性的高阶动态加权。</p>",
+    "<h4>数据源底层定义</h4><p>数据源挂载于本地 <code>/data/aqdata.db</code>。站点坐标采用无偏 WGS-84 投影地理坐标系存储，与底图几何中心轴完全对齐。</p>",
+    "<h4>全生命周期极客快捷键</h4><ul><li><b>W / S</b> : 上下循环选择显示指标 (CO~AQI)</li><li><b>Q / E</b> : 升降轮换多国 AQI 标准</li><li><b>A / D</b> : 历史时序向后/向前回溯（长按触发自动放映）</li><li><b>T</b> : 唤醒/隐藏时间整点下拉选择网格</li><li><b>R</b> : 一键消除时轴切回实时追踪视图</li><li><b>I</b> : 弹出/关闭本系统说明看板</li></ul>",
+    "<h4>关于</h4><p>aqobs v2.6.0<br/>High-Resolution Spatial-Temporal Environmental Spatial Terminal.</p>"
+];
+
+function switchTab(idx) {
+    document.querySelectorAll('.modal-tab').forEach((el, i) => {
+        if (i === idx) el.classList.add('active'); else el.classList.remove('active');
+    });
+    document.getElementById('modal-content').innerHTML = helpTexts[idx];
+}
+
+// 【修复/重构要点】：将全局切换函数显示暴露给全局作用域，确保 HTML 中的 onclick 映射完好生效
+window.switchTab = switchTab;
+
+window.addEventListener('resize', () => {
+    if (STATE.isHistory) {
+        buildTimeSliderTicks();
+        syncUIStateAndURL();
+    }
+});
+
+window.onload = async () => {
+    await applicationMain();
+};
