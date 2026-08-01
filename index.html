@@ -112,18 +112,14 @@
         .slider-container { display: flex; align-items: center; gap: 6px; width: 100%; position: relative; }
         .nav-btn { font-weight: bold; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; padding: 0; user-select: none; }
         
+        /* 时间轴刻度容器与刻度线：纯 HTML/CSS 方案 */
         #timeline-axis-wrapper { position: relative; flex-grow: 1; height: 32px; background: #f3f4f6; border: 1px solid var(--border-color); border-radius: 4px; overflow: visible; }
-        .timeline-tick { position: absolute; bottom: 0; width: 1px; height: 6px; background: #6b7280; }
-        .timeline-tick.midnight { height: 12px; background: #111827; width: 2px; }
-        .timeline-label { position: absolute; top: 1px; font-size: 9px; color: #111827; transform: translateX(-50%); font-weight: bold; pointer-events: none; }
+        .timeline-tick { position: absolute; bottom: 0; width: 1px; height: 6px; background-color: #4b5563; pointer-events: none; }
+        .timeline-tick.midnight { height: 12px; width: 2px; background-color: #111827; }
+        .timeline-label { position: absolute; top: 1px; font-size: 9px; color: #111827; transform: translateX(-50%); font-weight: bold; pointer-events: none; white-space: nowrap; }
 
         /* 严格 60° 直角梯形游标（下底右对齐刻度） */
-        #timeline-cursor {
-            position: absolute; top: 0;
-            background: rgba(37, 99, 235, 0.9);
-            transform: translateX(-100%); /* 下底（右侧边）正对刻度线 */
-            cursor: grab; z-index: 10;
-        }
+        #timeline-cursor { position: absolute; top: 0; background: rgba(37, 99, 235, 0.9); transform: translateX(-100%); cursor: grab; z-index: 10; }
         #timeline-cursor:active { cursor: grabbing; background: rgba(29, 78, 216, 1); }
 
         /* 地图站点标记渲染形态 */

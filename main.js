@@ -317,60 +317,40 @@ function buildTimeDropdownDOM() {
     buildTimeSliderTicks();
 }
 
-// 绘制历史时间标尺刻度（SVG + crispEdges 终极干掉抗锯齿）
+// 绘制历史时间标尺刻度（纯 DOM 像素取整）
 function buildTimeSliderTicks() {
     const wrapper = document.getElementById('timeline-axis-wrapper');
-    // 清理旧刻度与 SVG 矢量图层
-    wrapper.querySelectorAll('.timeline-svg, .timeline-label').forEach(el => el.remove());
+    wrapper.querySelectorAll('.timeline-tick, .timeline-label').forEach(el => el.remove());
     if (STATE.timeTimelineList.length === 0) return;
 
-    const minTs = STATE.timeTimelineList[0];
-    const maxTs = STATE.timeTimelineList[STATE.timeTimelineList.length - 1];
-    const span = maxTs - minTs || 1;
-    const width = wrapper.clientWidth || 300;
-    const height = wrapper.clientHeight || 32;
+    const count = STATE.timeTimelineList.length;
+    const wrapperWidth = wrapper.clientWidth || 300;
+    
+    // 计算两点之间的精确像素步长
+    const step = count > 1 ? wrapperWidth / (count - 1) : 0;
 
-    // 创建 SVG 绘制容器
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('class', 'timeline-svg');
-    svg.setAttribute('width', '100%');
-    svg.setAttribute('height', '100%');
-    svg.style.position = 'absolute';
-    svg.style.top = '0';
-    svg.style.left = '0';
-    svg.style.pointerEvents = 'none';
-
-    STATE.timeTimelineList.forEach(ts => {
-        const percent = (ts - minTs) / span;
-        const x = percent * width;
+    STATE.timeTimelineList.forEach((ts, idx) => {
+        // 核心突破：摒弃百分比，强制按索引计算物理像素并取整 (Math.round)
+        const px = Math.round(idx * step);
         const d = new Date(ts * 1000);
         const isMidnight = d.getHours() === 0;
 
-        // 创建 SVG 刻度线
-        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        line.setAttribute('x1', x);
-        line.setAttribute('x2', x);
-        line.setAttribute('y1', isMidnight ? height - 12 : height - 6); // 午夜 12px，普通 6px
-        line.setAttribute('y2', height);
-        line.setAttribute('stroke', isMidnight ? '#111827' : '#6b7280');
-        line.setAttribute('stroke-width', isMidnight ? '2' : '1');
+        const tick = document.createElement('div');
+        tick.className = `timeline-tick ${isMidnight ? 'midnight' : ''}`;
         
-        // 核心技术：强行关闭抗锯齿，使物理像素 100% 硬对齐
-        line.setAttribute('shape-rendering', 'crispEdges');
-        
-        svg.appendChild(line);
+        // 普通 1px 线直接对齐物理像素；2px 的午夜线左移 1px 居中
+        tick.style.left = isMidnight ? `${px - 1}px` : `${px}px`;
+        wrapper.appendChild(tick);
 
-        // 绘制日期标签
         if (isMidnight) {
             const label = document.createElement('div');
             label.className = 'timeline-label';
-            label.style.left = `${percent * 100}%`;
+            label.style.left = `${px}px`;
             label.innerText = `${d.getDate()}日`;
             wrapper.appendChild(label);
         }
     });
 
-    wrapper.appendChild(svg);
     setupSliderDragLogic();
 }
 
