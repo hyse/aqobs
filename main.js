@@ -416,6 +416,7 @@ function setupSliderDragLogic() {
 
 // 双向视图状态控制器
 async function enterHistoryView(ts) {
+    if (STATE.urlParams.level === '000') return;
     STATE.isHistory = true;
     STATE.currentTimestamp = ts;
     document.getElementById('upper-control-row').style.display = 'flex';
@@ -443,6 +444,16 @@ async function enterRealtimeView() {
 
 // 参数同步到 DOM 与 URL 状态
 function syncUIStateAndURL() {
+    const controlPanel = document.getElementById('control-panel');
+    if (STATE.urlParams.level === '000') {
+        if (STATE.isHistory) STATE.isHistory = false;
+        document.getElementById('upper-control-row').style.display = 'none';
+        controlPanel.style.display = 'none';
+        pushStateToURL();
+        return;
+    }
+    controlPanel.style.display = 'flex';
+
     document.getElementById('pol-select').value = STATE.urlParams.pol;
     document.getElementById('aqi-select').value = STATE.urlParams.aqi;
 
@@ -541,6 +552,7 @@ document.addEventListener('click', () => { dropBox.style.display = 'none'; });
 
 // 长按自动放映循环机制驱动
 function startAutoPlay(direction) {
+    if (STATE.urlParams.level === '000') return;
     stopAutoPlay();
     if (!STATE.isHistory) {
         enterHistoryView(STATE.timeTimelineList[STATE.timeTimelineList.length - 1]);
@@ -562,7 +574,7 @@ function stopAutoPlay() {
 
 // 按键前后移动核心步进方法
 function stepTime(isForward) {
-    if (STATE.timeTimelineList.length === 0) return;
+    if (STATE.urlParams.level === '000' || STATE.timeTimelineList.length === 0) return; // 【修改】增加 level === '000' 阻断
     let idx = STATE.timeTimelineList.indexOf(STATE.currentTimestamp);
     if (idx === -1) {
         idx = STATE.timeTimelineList.length - 1;
