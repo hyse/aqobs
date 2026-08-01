@@ -14,16 +14,16 @@ const STATE = {
     urlParams: { lat: null, lon: null, scale: null, level: '111', pol: 'aqi', aqi: 'us' }
 };
 
-// 【新增】全局弹窗生命周期管理
+// 【修改】全局弹窗生命周期管理：记录当前被固定的站点 ID
 let activePopup = null; 
-let isPopupPinned = false; // 是否被用户点击固定住
+let pinnedStationId = null; // 当前被点击固定展示的站点 ID（null 表示未固定）
 
 function closeAllPopups() {
     if (activePopup) {
         activePopup.remove();
         activePopup = null;
     }
-    isPopupPinned = false;
+    pinnedStationId = null;
 }
 
 const polList = ['co', 'so2', 'no2', 'o3', 'pm25', 'pm10', 'aqi'];
@@ -892,9 +892,6 @@ function bindPopupEvents(el, station, record) {
     };
 
     const show = () => {
-        if (isPopupPinned) return; // 如果已被用户点击固定，忽略 hover
-        
-        // 销毁旧的
         if (activePopup) activePopup.remove();
 
         activePopup = new maplibregl.Popup({ 
@@ -903,26 +900,30 @@ function bindPopupEvents(el, station, record) {
             closeOnClick: false 
         })
         .setLngLat([station.lon, station.lat])
-        .setDOMContent(buildContent()) // 这里继续用你原来的函数
+        .setDOMContent(buildContent())
         .addTo(map);
     };
 
     // 绑定鼠标悬停事件 (桌面端体验)
-    el.addEventListener('mouseenter', show);
-    el.addEventListener('mouseleave', () => {
-        if (!isPopupPinned) closeAllPopups(); // 只有没被固定时才允许自动消失
+    el.addEventListener('mouseenter', () => {
+        if (pinnedStationId !== null) return; // 若已有固定弹窗，悬停不打扰
+        show();
     });
 
-    // 绑定点击事件 (适配手机端)
+    el.addEventListener('mouseleave', () => {
+        if (pinnedStationId === null) closeAllPopups(); // 未固定时移出自动关闭
+    });
+
+    // 绑定点击事件 (适配桌面与移动端)
     el.addEventListener('click', (e) => {
-        e.stopPropagation(); // 防止点击冒泡到地图导致立即关闭
+        e.stopPropagation(); // 防止点击冒泡到地图导致触发 map.on('click')
         
-        if (isPopupPinned) {
-            // 已固定状态下再次点击，关闭弹窗
+        if (pinnedStationId === station.id) {
+            // 再次点击【已固定的同一个站点】：关闭弹窗并取消固定
             closeAllPopups();
         } else {
-            // 进入固定模式
-            isPopupPinned = true;
+            // 点击【新站点】（无论之前是否有其他站点被固定）：立即切换并固定新站点弹窗
+            pinnedStationId = station.id;
             show();
         }
     });
