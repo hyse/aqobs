@@ -429,6 +429,15 @@ async function enterHistoryView(ts) {
 }
 
 async function enterRealtimeView() {
+    // 【新增】检测当前系统整点是否已跨点更新
+    const currentHourFloor = Math.floor(Date.now() / 1000 / 3600) * 3600;
+    const latestTs = STATE.timeTimelineList[STATE.timeTimelineList.length - 1];
+    
+    if (!latestTs || latestTs !== currentHourFloor) {
+        window.location.reload();
+        return;
+    }
+
     STATE.isHistory = false;
     stopAutoPlay();
     document.getElementById('upper-control-row').style.display = 'none';
@@ -436,7 +445,6 @@ async function enterRealtimeView() {
     syncUIStateAndURL();
     
     // 实时视角下，拉取时间轴上最新的一个整点数据
-    const latestTs = STATE.timeTimelineList[STATE.timeTimelineList.length - 1];
     await loadHourlyDataFromServer(latestTs);
     renderMapMarkers();
 }
