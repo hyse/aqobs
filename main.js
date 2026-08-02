@@ -30,7 +30,7 @@ const polList = ['co', 'so2', 'no2', 'o3', 'pm25', 'pm10', 'aqi'];
 
 let map;
 
-// 根据短边计算50km自适应缩放比
+// 根据短边计算 50 km 自适应缩放比
 function calculateZoomFor50Km(lat) {
     const shortEdge = Math.min(window.innerWidth, window.innerHeight);
     const latRad = lat * Math.PI / 180;
@@ -84,7 +84,7 @@ function findRegionCoords(code, name) {
     return null;
 }
 
-// 高可用 IP 定位驱动机（三重 HTTPS/CORS 容错机制 - 统一单行语法）
+// 高可用 IP 定位驱动机（三重 HTTPS/CORS 并行容错机制 - 统一单行语法）
 async function fetchIpLocation() {
     const fetchWithTimeout = async (url, parseFn, timeout = 2000) => {
         const controller = new AbortController();
@@ -94,35 +94,34 @@ async function fetchIpLocation() {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             clearTimeout(timer);
-            return parseFn(data);
+            const parsed = parseFn(data);
+            if (parsed) return parsed;
+            throw new Error('Invalid data');
         } catch (e) {
             clearTimeout(timer);
-            return null;
+            throw e;
         }
     };
 
-    // 通道 1：BigDataCloud
-    const bdc = await fetchWithTimeout(
-        'https://api.bigdatacloud.net/data/reverse-geocode-client',
-        d => (d && d.latitude && d.longitude) ? { lat: parseFloat(d.latitude), lon: parseFloat(d.longitude) } : null
-    );
-    if (bdc) return bdc;
-
-    // 通道 2：ipapi.co
-    const ipapi = await fetchWithTimeout(
-        'https://ipapi.co/json/',
-        d => (d && d.latitude && d.longitude) ? { lat: parseFloat(d.latitude), lon: parseFloat(d.longitude) } : null
-    );
-    if (ipapi) return ipapi;
-
-    // 通道 3：ipinfo.io（使用三元运算符直接拆分 loc 字段）
-    const ipinfo = await fetchWithTimeout(
-        'https://ipinfo.io/json',
-        d => (d && d.loc) ? { lat: parseFloat(d.loc.split(',')[0]), lon: parseFloat(d.loc.split(',')[1]) } : null
-    );
-    if (ipinfo) return ipinfo;
-
-    return null;
+    try {
+        // 使用 Promise.any 并发发起 3 个通道请求，谁最快用谁
+        return await Promise.any([
+            fetchWithTimeout(
+                'https://api.bigdatacloud.net/data/reverse-geocode-client',
+                d => (d && d.latitude && d.longitude) ? { lat: parseFloat(d.latitude), lon: parseFloat(d.longitude) } : null
+            ),
+            fetchWithTimeout(
+                'https://ipapi.co/json/',
+                d => (d && d.latitude && d.longitude) ? { lat: parseFloat(d.latitude), lon: parseFloat(d.longitude) } : null
+            ),
+            fetchWithTimeout(
+                'https://ipinfo.io/json',
+                d => (d && d.loc) ? { lat: parseFloat(d.loc.split(',')[0]), lon: parseFloat(d.loc.split(',')[1]) } : null
+            )
+        ]);
+    } catch (e) {
+        return null;
+    }
 }
 
 // 全周期初始化驱动
@@ -130,14 +129,19 @@ async function applicationMain() {
     try {
         parseURLQuery();
         
-        // 1. 优先加载并清洗标准配置资产 json
-        document.getElementById('loader-text').innerText = "加载空气质量算法标准规则配置...";
-        const aqiRes = await fetch('./assets/aqi.json');
+        document.getElementById('loader-text').innerText = "正在并行同步配置与静态站点资产...";
+
+        // 【优化】并行拉取 AQI 规则、区域网格与站点静态资产
+        const [aqiRes, regionsRes, stationsRes] = await Promise.all([
+            fetch('./assets/aqi.json'),
+            fetch('./public/regions.json'),
+            fetch('./public/stations.json')
+        ]);
+
         STATE.aqiRules = await aqiRes.json();
         
         const aqiSelect = document.getElementById('aqi-select');
         aqiSelect.innerHTML = '';
-        // 照任务书要求：配置顺序从前到后对应下拉框由下到上反向渲染
         [...STATE.aqiRules].reverse().forEach(rule => {
             const opt = document.createElement('option');
             opt.value = rule.code;
@@ -146,19 +150,10 @@ async function applicationMain() {
         });
 
         if (!STATE.urlParams.aqi) {
-            STATE.urlParams.aqi = STATE.aqiRules[0].code; // 默认采用第一条规则
+            STATE.urlParams.aqi = STATE.aqiRules[0].code;
         }
         aqiSelect.value = STATE.urlParams.aqi;
         STATE.activeRule = STATE.aqiRules.find(r => r.code === STATE.urlParams.aqi) || STATE.aqiRules[0];
-
-        // ======= 彻底移除 SQL.js，改为纯静态 JSON 加载 =======
-        document.getElementById('loader-text').innerText = "正在从边缘节点同步站点与区域网格...";
-        
-        // 并行拉取公共静态数据
-        const [regionsRes, stationsRes] = await Promise.all([
-            fetch('./public/regions.json'),
-            fetch('./public/stations.json')
-        ]);
         
         const rawRegions = await regionsRes.json();
         const rawStations = await stationsRes.json();
