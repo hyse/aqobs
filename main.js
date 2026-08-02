@@ -86,7 +86,7 @@ function findRegionCoords(code, name) {
 
 // 【新增】多通道高可用 IP 定位驱动机
 async function fetchIpLocation() {
-    const fetchWithTimeout = async (url, timeout = 500) => {
+    const fetchWithTimeout = async (url, timeout = 2000) => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeout);
         try {
