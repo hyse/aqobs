@@ -84,57 +84,43 @@ function findRegionCoords(code, name) {
     return null;
 }
 
-// 【新增】多通道高可用 IP 定位驱动机
+// 高可用 IP 定位驱动机（三重 HTTPS/CORS 容错机制 - 统一单行语法）
 async function fetchIpLocation() {
-    const fetchWithTimeout = async (url, timeout = 2000) => {
+    const fetchWithTimeout = async (url, parseFn, timeout = 2000) => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeout);
         try {
             const res = await fetch(url, { signal: controller.signal });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
             clearTimeout(timer);
-            return await res.json();
+            return parseFn(data);
         } catch (e) {
             clearTimeout(timer);
             return null;
         }
     };
 
-    // 方案 1: 沃云 API（国内极速，HTTPS/CORS 友好，返回 adcode 与详细省市区）
-    try {
-        const res = await fetchWithTimeout('https://api.vore.top/api/IPdata');
-        if (res && res.code === 200) {
-            const ad = res.adcode || {};
-            const info = res.ipdata || {};
-            const coords = findRegionCoords(ad.c || ad.d || ad.p, info.info2 || info.info1);
-            if (coords) return coords;
-        }
-    } catch (e) {}
+    // 通道 1：BigDataCloud
+    const bdc = await fetchWithTimeout(
+        'https://api.bigdatacloud.net/data/reverse-geocode-client',
+        d => (d && d.latitude && d.longitude) ? { lat: parseFloat(d.latitude), lon: parseFloat(d.longitude) } : null
+    );
+    if (bdc) return bdc;
 
-    // 方案 2: 太平洋电脑网（国内极速，返回省市代码与地名）
-    try {
-        const res = await fetchWithTimeout('http://whois.pconline.com.cn/ipJson.jsp?json=true');
-        if (res && (res.cityCode || res.proCode || res.city || res.pro)) {
-            const coords = findRegionCoords(res.cityCode || res.proCode, res.city || res.pro);
-            if (coords) return coords;
-        }
-    } catch (e) {}
+    // 通道 2：ipapi.co
+    const ipapi = await fetchWithTimeout(
+        'https://ipapi.co/json/',
+        d => (d && d.latitude && d.longitude) ? { lat: parseFloat(d.latitude), lon: parseFloat(d.longitude) } : null
+    );
+    if (ipapi) return ipapi;
 
-    // 方案 3: IP-API（国外/通用，直接返回精准坐标 lat/lon）
-    try {
-        const res = await fetchWithTimeout('http://ip-api.com/json/?lang=zh-CN');
-        if (res && res.status === 'success' && res.lat && res.lon) {
-            return { lat: res.lat, lon: res.lon };
-        }
-    } catch (e) {}
-
-    // 方案 4: IP9 接口（备用）
-    try {
-        const res = await fetchWithTimeout('https://ip9.com.cn/getip');
-        if (res) {
-            const coords = findRegionCoords(res.adcode || res.code, res.city || res.province);
-            if (coords) return coords;
-        }
-    } catch (e) {}
+    // 通道 3：ipinfo.io（使用三元运算符直接拆分 loc 字段）
+    const ipinfo = await fetchWithTimeout(
+        'https://ipinfo.io/json',
+        d => (d && d.loc) ? { lat: parseFloat(d.loc.split(',')[0]), lon: parseFloat(d.loc.split(',')[1]) } : null
+    );
+    if (ipinfo) return ipinfo;
 
     return null;
 }
@@ -211,7 +197,7 @@ async function applicationMain() {
         let startLon = STATE.urlParams.lon || 108.9404;
         let startZoom = STATE.urlParams.scale || calculateZoomFor50Km(startLat);
 
-        // 若URL未传坐标则通过多源冗余公网网关做缺省本地化定位
+        // 若URL未传坐标则通过多源公网网关做缺省本地化定位
         if (STATE.urlParams.lat === null) {
             const coords = await fetchIpLocation();
             if (coords && coords.lat && coords.lon) {
