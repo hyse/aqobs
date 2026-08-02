@@ -57,6 +57,88 @@ function pushStateToURL() {
     window.history.replaceState(null, '', newUrl);
 }
 
+// 【新增】根据行政区划代码或省市名称在 STATE.regions 中快速查找对应经纬度坐标
+function findRegionCoords(code, name) {
+    if (!STATE.regions || STATE.regions.length === 0) return null;
+    
+    // 1. 优先按行政区划代码 (Code) 匹配 (支持前4位市级匹配)
+    if (code) {
+        const cStr = String(code).trim();
+        let match = STATE.regions.find(r => String(r.code) === cStr);
+        if (!match && cStr.length >= 4) {
+            match = STATE.regions.find(r => String(r.code).startsWith(cStr.substring(0, 4)));
+        }
+        if (match && match.lat && match.lon) return { lat: match.lat, lon: match.lon };
+    }
+
+    // 2. 按省/市/区名称 (Name/Short) 模糊匹配
+    if (name) {
+        const nStr = String(name).trim();
+        const match = STATE.regions.find(r => 
+            (r.name && (r.name.includes(nStr) || nStr.includes(r.name))) ||
+            (r.short && (r.short.includes(nStr) || nStr.includes(r.short)))
+        );
+        if (match && match.lat && match.lon) return { lat: match.lat, lon: match.lon };
+    }
+
+    return null;
+}
+
+// 【新增】多通道高可用 IP 定位驱动机
+async function fetchIpLocation() {
+    const fetchWithTimeout = async (url, timeout = 500) => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeout);
+        try {
+            const res = await fetch(url, { signal: controller.signal });
+            clearTimeout(timer);
+            return await res.json();
+        } catch (e) {
+            clearTimeout(timer);
+            return null;
+        }
+    };
+
+    // 方案 1: 沃云 API（国内极速，HTTPS/CORS 友好，返回 adcode 与详细省市区）
+    try {
+        const res = await fetchWithTimeout('https://api.vore.top/api/IPdata');
+        if (res && res.code === 200) {
+            const ad = res.adcode || {};
+            const info = res.ipdata || {};
+            const coords = findRegionCoords(ad.c || ad.d || ad.p, info.info2 || info.info1);
+            if (coords) return coords;
+        }
+    } catch (e) {}
+
+    // 方案 2: 太平洋电脑网（国内极速，返回省市代码与地名）
+    try {
+        const res = await fetchWithTimeout('http://whois.pconline.com.cn/ipJson.jsp?json=true');
+        if (res && (res.cityCode || res.proCode || res.city || res.pro)) {
+            const coords = findRegionCoords(res.cityCode || res.proCode, res.city || res.pro);
+            if (coords) return coords;
+        }
+    } catch (e) {}
+
+    // 方案 3: IP-API（国外/通用，直接返回精准坐标 lat/lon）
+    try {
+        const res = await fetchWithTimeout('http://ip-api.com/json/?lang=zh-CN');
+        if (res && res.status === 'success' && res.lat && res.lon) {
+            return { lat: res.lat, lon: res.lon };
+        }
+    } catch (e) {}
+
+    // 方案 4: IP9 接口（备用）
+    try {
+        const res = await fetchWithTimeout('https://ip9.com.cn/getip');
+        if (res) {
+            const coords = findRegionCoords(res.adcode || res.code, res.city || res.province);
+            if (coords) return coords;
+        }
+    } catch (e) {}
+
+    return null;
+}
+
 // 全周期初始化驱动
 async function applicationMain() {
     try {
@@ -129,15 +211,14 @@ async function applicationMain() {
         let startLon = STATE.urlParams.lon || 108.9404;
         let startZoom = STATE.urlParams.scale || calculateZoomFor50Km(startLat);
 
-        // 若URL未传坐标则通过公网网关做缺省本地化定位
+        // 若URL未传坐标则通过多源冗余公网网关做缺省本地化定位
         if (STATE.urlParams.lat === null) {
-            try {
-                const geo = await fetch('https://ipapi.co/json/').then(r => r.json());
-                if (geo.latitude && geo.longitude) {
-                    startLat = geo.latitude; startLon = geo.longitude;
-                    if (STATE.urlParams.scale === null) startZoom = calculateZoomFor50Km(startLat);
-                }
-            } catch(e) {}
+            const coords = await fetchIpLocation();
+            if (coords && coords.lat && coords.lon) {
+                startLat = coords.lat; 
+                startLon = coords.lon;
+                if (STATE.urlParams.scale === null) startZoom = calculateZoomFor50Km(startLat);
+            }
         }
 
         map = new maplibregl.Map({
