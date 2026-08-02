@@ -7,18 +7,7 @@ const STATE = {
     isHistory: false,
     currentTimestamp: null,
     timeTimelineList: [],
-    // 🕵️‍♂️【陷阱代码】：谁只要触碰 markerInstances，立刻在控制台打印调用栈！
-    get markerInstances() {
-        console.group('🚨 抓到现形了！以下代码在偷偷【读取】markerInstances：');
-        console.trace(); // 打印调用栈，直接显示是哪个文件、第几行
-        console.groupEnd();
-        return [];
-    },
-    set markerInstances(val) {
-        console.group('🚨 抓到现形了！以下代码在偷偷【修改】markerInstances：');
-        console.trace();
-        console.groupEnd();
-    },
+    markerInstances: [],    // 保留，我们将主要使用下面的 markerMap
     markerMap: new Map(),   // 【新增：用于 O(1) 级站点 Marker 内存复用映射】
     hourlyCache: new Map(), // 新增：用于缓存当前整点从小端 CDN 拉回来的中括号时序记录
     playInterval: null,
