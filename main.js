@@ -7,6 +7,7 @@ const STATE = {
     isHistory: false,
     currentTimestamp: null,
     timeTimelineList: [],
+    markerInstances: [],    // 保留，我们将主要使用下面的 markerMap
     markerMap: new Map(),   // 【新增：用于 O(1) 级站点 Marker 内存复用映射】
     hourlyCache: new Map(), // 新增：用于缓存当前整点从小端 CDN 拉回来的中括号时序记录
     playInterval: null,
@@ -764,196 +765,144 @@ function getTextColorForBackground(colorStr) {
     return brightness > 170 ? '#727272' : '#ffffff';
 }
 
-// 高动态位掩码过滤与 Canvas 站点标记控制系统
+/**
+ * 1. 创建并初始化 Marker 实例（仅在首次创建站点 Marker 时调用一次）
+ */
+function createMarkerInstance(station) {
+  // 1.1 主容器
+  const containerEl = document.createElement('div');
+  containerEl.className = 'custom-marker';
+  containerEl.style.position = 'relative';
+
+  // 1.2 倒计时/状态 Canvas 节点
+  const canvasEl = document.createElement('canvas');
+  canvasEl.className = 'marker-canvas';
+  const dpr = window.devicePixelRatio || 1;
+  canvasEl.width = 32 * dpr;
+  canvasEl.height = 32 * dpr;
+  canvasEl.style.width = '32px';
+  canvasEl.style.height = '32px';
+
+  // 1.3 数值/文字显示节点
+  const nodeEl = document.createElement('div');
+  nodeEl.className = 'marker-node';
+
+  // 组装 DOM 结构（仅此一次）
+  containerEl.appendChild(canvasEl);
+  containerEl.appendChild(nodeEl);
+
+  // 1.4 创建 MapLibre Marker
+  const marker = new maplibregl.Marker({ element: containerEl })
+    .setLngLat([station.longitude, station.latitude]);
+
+  // 1.5 返回完整的对象结构，缓存节点与渲染状态
+  return {
+    marker,
+    containerEl,
+    canvasEl,
+    nodeEl,
+    // 状态缓存（用于对比，避免无效 DOM/Canvas 操作）
+    _state: {
+      value: null,
+      bgColor: null,
+      opacity: null,
+      timestamp: null
+    }
+  };
+}
+
+/**
+ * 2. 高效更新 Marker 内容（渲染循环中频繁调用）
+ */
+function updateMarkerInstance(markerObj, station, displayData) {
+  const { nodeEl, canvasEl, _state } = markerObj;
+  const { valueStr, bgColor, opacity, timestamp } = displayData;
+
+  // 2.1 增量更新数值（仅在变动时操作 DOM）
+  if (_state.value !== valueStr) {
+    nodeEl.textContent = valueStr;
+    _state.value = valueStr;
+  }
+
+  // 2.2 增量更新背景色与透明度
+  if (_state.bgColor !== bgColor || _state.opacity !== opacity) {
+    nodeEl.style.backgroundColor = bgColor;
+    nodeEl.style.opacity = opacity;
+    _state.bgColor = bgColor;
+    _state.opacity = opacity;
+  }
+
+  // 2.3 按需重绘 Canvas 倒计时环
+  if (_state.timestamp !== timestamp) {
+    drawCountdownRing(canvasEl, timestamp);
+    _state.timestamp = timestamp;
+  }
+}
+
+/**
+ * 3. 绘制 Canvas 倒计时环（支持高分屏 DPR 缩放）
+ */
+function drawCountdownRing(canvas, timestamp) {
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const size = 32 * dpr;
+  
+  ctx.clearRect(0, 0, size, size);
+
+  // 示例：根据数据时效计算角度并绘制
+  const now = Math.floor(Date.now() / 1000);
+  const diffSec = Math.max(0, now - timestamp);
+  const progress = Math.max(0, 1 - diffSec / 3600); // 1小时倒计时
+
+  ctx.save();
+  ctx.lineWidth = 2.5 * dpr;
+  ctx.strokeStyle = progress < 0.2 ? '#ff4d4f' : '#1890ff';
+  
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, (size / 2) - (2 * dpr), -Math.PI / 2, (-Math.PI / 2) + (Math.PI * 2 * progress));
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * 4. 业务调用的主渲染逻辑
+ */
 function renderMapMarkers() {
-    closeAllPopups();
+  const currentFilterMask = STATE.filterMask; // 位掩码
 
-    const mask = STATE.urlParams.level;
-    const currentSystemSec = Math.floor(Date.now() / 1000);
-    const recordMap = STATE.hourlyCache;
+  STATE.stations.forEach(station => {
+    const stationId = station.id;
+    let markerObj = STATE.markerMap.get(stationId);
 
-    STATE.stations.forEach(st => {
-        let visible = false;
-        if (st.level === '国控' && mask[0] === '1') visible = true;
-        if (st.level === '省控' && mask[1] === '1') visible = true;
-        if (st.level !== '国控' && st.level !== '省控' && mask[2] === '1') visible = true;
-        if (mask === '000') visible = true;
+    // 位掩码匹配或状态判断
+    const isVisible = checkStationVisibility(station, currentFilterMask);
 
-        let markerObj = STATE.markerMap.get(st.id);
+    if (!isVisible) {
+      if (markerObj) {
+        markerObj.marker.remove(); // 从地图移除，但保存在 map 中复用
+      }
+      return;
+    }
 
-        // 不符合层级掩码，直接隐藏 Marker，避免重新销毁
-        if (!visible) {
-            if (markerObj) markerObj.containerEl.style.display = 'none';
-            return;
-        }
+    // 内存池：不存在则创建，存在则复用
+    if (!markerObj) {
+      markerObj = createMarkerInstance(station);
+      STATE.markerMap.set(stationId, markerObj);
+    }
 
-        let matchedRecord = null;
-        let nodeValue = '';
-        let rawVal = 0;
-        let hexColor = '#9ca3af';
-        let isEmptyMode = (mask === '000');
+    // 计算当前时轴下该站点的展示数据
+    const displayData = calculateDisplayData(station, STATE.currentTime);
 
-        if (!isEmptyMode) {
-            matchedRecord = recordMap.get(st.id);
-            if (!matchedRecord) {
-                if (markerObj) markerObj.containerEl.style.display = 'none';
-                return;
-            }
+    // 高效更新 DOM，无任何 destroy/re-create 开销
+    updateMarkerInstance(markerObj, station, displayData);
 
-            if (!STATE.isHistory && STATE.urlParams.pol !== 'aqi') {
-                if (matchedRecord[STATE.urlParams.pol] === null || matchedRecord[STATE.urlParams.pol] === undefined) {
-                    if (markerObj) markerObj.containerEl.style.display = 'none';
-                    return;
-                }
-            }
-
-            if (STATE.urlParams.pol === 'aqi') {
-                rawVal = getStationCalculatedAqi(matchedRecord, STATE.activeRule);
-                if (rawVal === null) {
-                    if (markerObj) markerObj.containerEl.style.display = 'none';
-                    return;
-                }
-                nodeValue = rawVal;
-            } else {
-                rawVal = matchedRecord[STATE.urlParams.pol];
-                if (rawVal === null) {
-                    if (markerObj) markerObj.containerEl.style.display = 'none';
-                    return;
-                }
-                
-                if (STATE.urlParams.pol === 'co') {
-                    rawVal = rawVal / 1000;
-                    nodeValue = rawVal.toFixed(1);
-                } else {
-                    nodeValue = Math.round(rawVal);
-                }
-            }
-
-            if (!STATE.isHistory) {
-                const ageSeconds = currentSystemSec - matchedRecord.unixTime;
-                if (ageSeconds > 7200) {
-                    if (markerObj) markerObj.containerEl.style.display = 'none';
-                    return;
-                }
-            }
-
-            hexColor = getColorAndLabel(STATE.urlParams.pol, rawVal, STATE.activeRule).color;
-        }
-
-        // 核心内存池：仅在 Marker 不存在时才执行实例化
-        if (!markerObj) {
-            const containerEl = document.createElement('div');
-            const marker = new maplibregl.Marker({ element: containerEl, anchor: 'center' })
-                .setLngLat([st.lon, st.lat])
-                .addTo(map);
-            markerObj = { marker, containerEl };
-            STATE.markerMap.set(st.id, markerObj);
-        }
-
-        const containerEl = markerObj.containerEl;
-        containerEl.style.display = 'flex';
-        containerEl.style.opacity = '1';
-        containerEl.innerHTML = ''; // 清空上一帧内部 DOM
-
-        if (isEmptyMode) {
-            const size = st.level === '国控' ? 14 : 12;
-            containerEl.className = 'station-marker empty-station';
-            containerEl.style.width = `${size}px`;
-            containerEl.style.height = `${size}px`;
-            containerEl.style.borderColor = '#1f2937';
-            
-            if (st.level === '国控') {
-                containerEl.style.borderWidth = '3.3px'; containerEl.style.borderStyle = 'solid';
-            } else if (st.level === '省控') {
-                containerEl.style.borderWidth = '4px'; containerEl.style.borderStyle = 'double';
-            } else {
-                containerEl.style.borderWidth = '1.4px'; containerEl.style.borderStyle = 'solid';
-            }
-            bindPopupEvents(containerEl, st, null);
-        } else {
-            containerEl.className = 'station-marker';
-            const node = document.createElement('div');
-            node.className = 'station-node';
-
-            node.style.display = 'flex';
-            node.style.alignItems = 'center';
-            node.style.justifyContent = 'center';
-            node.style.position = 'relative';
-            node.style.boxSizing = 'border-box';
-            node.style.padding = '0';
-            node.style.margin = '0';
-            node.style.lineHeight = '1';
-            node.style.textAlign = 'center';
-            node.style.whiteSpace = 'nowrap';
-            
-            if (!STATE.isHistory) {
-                node.style.width = '24px';
-                node.style.height = '24px';
-                node.style.borderRadius = '50%';
-                node.style.fontSize = '13px';
-            } else {
-                node.style.width = '24px';
-                node.style.height = '16px';
-                node.style.borderRadius = '4px';
-                node.style.fontSize = '12px';
-            }
-            
-            node.style.backgroundColor = hexColor;
-            node.style.color = getTextColorForBackground(hexColor);
-            node.innerText = nodeValue;
-            containerEl.appendChild(node);
-
-            if (!STATE.isHistory) {
-                const ageSeconds = currentSystemSec - matchedRecord.unixTime;
-                if (ageSeconds <= 3600) {
-                    const canvas = document.createElement('canvas');
-                    canvas.className = 'ring-canvas';
-                    canvas.width = 32; canvas.height = 32;
-
-                    canvas.style.position = 'absolute';
-                    canvas.style.top = '50%';
-                    canvas.style.left = '50%';
-                    canvas.style.transform = 'translate(-50%, -50%)';
-                    canvas.style.pointerEvents = 'none';
-
-                    const ctx = canvas.getContext('2d');
-                    const ratio = 1 - (ageSeconds / 3600);
-                    ctx.clearRect(0, 0, 32, 32);
-                    
-                    ctx.strokeStyle = '#202020';
-                    const cx = 16, cy = 16;
-                    const startAngle = -Math.PI / 2;
-                    const endAngle = (-Math.PI / 2) + (Math.PI * 2 * ratio);
-
-                    if (st.level === '国控') {
-                        ctx.lineWidth = 2.6;
-                        ctx.beginPath();
-                        ctx.arc(cx, cy, 14, startAngle, endAngle);
-                        ctx.stroke();
-                    } else if (st.level === '省控') {
-                        ctx.lineWidth = 1;
-                        ctx.beginPath();
-                        ctx.arc(cx, cy, 14.3, startAngle, endAngle);
-                        ctx.stroke();
-                        ctx.beginPath();
-                        ctx.arc(cx, cy, 12, startAngle, endAngle);
-                        ctx.stroke();
-                    } else {
-                        ctx.lineWidth = 1.2;
-                        ctx.beginPath();
-                        ctx.arc(cx, cy, 14, startAngle, endAngle);
-                        ctx.stroke();
-                    }
-
-                    node.appendChild(canvas);
-                } else if (ageSeconds > 3600 && ageSeconds <= 7200) {
-                    const opacity = 1 - ((ageSeconds - 3600) / 3600);
-                    containerEl.style.opacity = opacity;
-                }
-            }
-            bindPopupEvents(containerEl, st, matchedRecord);
-        }
-    });
+    // 确保添加到地图
+    if (!markerObj.marker.getLngLat()) {
+      markerObj.marker.addTo(map);
+    } else if (!markerObj.marker.getElement().parentElement) {
+      markerObj.marker.addTo(map);
+    }
+  });
 }
 
 // 多指标聚合看板 Tooltip 引擎
