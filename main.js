@@ -765,7 +765,7 @@ function getTextColorForBackground(colorStr) {
     return brightness > 170 ? '#727272' : '#ffffff';
 }
 
-// 高动态位掩码过滤与 Canvas 站点标记控制系统（Zero-DOM-Tearing 性能优化版）
+// 高动态位掩码过滤与 Canvas 站点标记控制系统
 function renderMapMarkers() {
     closeAllPopups();
 
@@ -774,7 +774,6 @@ function renderMapMarkers() {
     const recordMap = STATE.hourlyCache;
 
     STATE.stations.forEach(st => {
-        // 1. 层级掩码校验
         let visible = false;
         if (st.level === '国控' && mask[0] === '1') visible = true;
         if (st.level === '省控' && mask[1] === '1') visible = true;
@@ -783,13 +782,12 @@ function renderMapMarkers() {
 
         let markerObj = STATE.markerMap.get(st.id);
 
-        // 不符合层级掩码，隐藏节点
+        // 不符合层级掩码，直接隐藏 Marker，避免重新销毁
         if (!visible) {
             if (markerObj) markerObj.containerEl.style.display = 'none';
             return;
         }
 
-        // 2. 数据匹配与计算逻辑
         let matchedRecord = null;
         let nodeValue = '';
         let rawVal = 0;
@@ -843,159 +841,117 @@ function renderMapMarkers() {
             hexColor = getColorAndLabel(STATE.urlParams.pol, rawVal, STATE.activeRule).color;
         }
 
-        // 3. 【核心优化点】内存池与 DOM 结构持久化初始化
+        // 核心内存池：仅在 Marker 不存在时才执行实例化
         if (!markerObj) {
             const containerEl = document.createElement('div');
-            
-            // 预创建内部节点（仅创建一次，绝不 innerHTML = '' 销毁）
-            const nodeEl = document.createElement('div');
-            nodeEl.className = 'station-node';
-            
-            const textEl = document.createElement('span'); // 专用于文字，避免重绘整个 node
-            
-            const canvasEl = document.createElement('canvas');
-            canvasEl.className = 'ring-canvas';
-            canvasEl.width = 32;
-            canvasEl.height = 32;
-            canvasEl.style.position = 'absolute';
-            canvasEl.style.top = '50%';
-            canvasEl.style.left = '50%';
-            canvasEl.style.transform = 'translate(-50%, -50%)';
-            canvasEl.style.pointerEvents = 'none';
-
-            nodeEl.appendChild(textEl);
-            nodeEl.appendChild(canvasEl);
-            containerEl.appendChild(nodeEl);
-
             const marker = new maplibregl.Marker({ element: containerEl, anchor: 'center' })
                 .setLngLat([st.lon, st.lat])
                 .addTo(map);
-
-            // 缓存 DOM 句柄与旧状态变量
-            markerObj = { 
-                marker, 
-                containerEl, 
-                nodeEl, 
-                textEl, 
-                canvasEl,
-                _lastMode: null,
-                _lastValue: null,
-                _lastColor: null,
-                _lastAgeRatio: null
-            };
+            markerObj = { marker, containerEl };
             STATE.markerMap.set(st.id, markerObj);
         }
 
-        const { containerEl, nodeEl, textEl, canvasEl } = markerObj;
+        const containerEl = markerObj.containerEl;
         containerEl.style.display = 'flex';
         containerEl.style.opacity = '1';
+        containerEl.innerHTML = ''; // 清空上一帧内部 DOM
 
-        // 4. 【增量 DOM 更新】仅在数据/模式改变时才调整 DOM
         if (isEmptyMode) {
-            if (markerObj._lastMode !== 'empty') {
-                const size = st.level === '国控' ? 14 : 12;
-                containerEl.className = 'station-marker empty-station';
-                containerEl.style.width = `${size}px`;
-                containerEl.style.height = `${size}px`;
-                containerEl.style.borderColor = '#1f2937';
-                
-                if (st.level === '国控') {
-                    containerEl.style.borderWidth = '3.3px'; containerEl.style.borderStyle = 'solid';
-                } else if (st.level === '省控') {
-                    containerEl.style.borderWidth = '4px'; containerEl.style.borderStyle = 'double';
-                } else {
-                    containerEl.style.borderWidth = '1.4px'; containerEl.style.borderStyle = 'solid';
-                }
-                nodeEl.style.display = 'none';
-                markerObj._lastMode = 'empty';
+            const size = st.level === '国控' ? 14 : 12;
+            containerEl.className = 'station-marker empty-station';
+            containerEl.style.width = `${size}px`;
+            containerEl.style.height = `${size}px`;
+            containerEl.style.borderColor = '#1f2937';
+            
+            if (st.level === '国控') {
+                containerEl.style.borderWidth = '3.3px'; containerEl.style.borderStyle = 'solid';
+            } else if (st.level === '省控') {
+                containerEl.style.borderWidth = '4px'; containerEl.style.borderStyle = 'double';
+            } else {
+                containerEl.style.borderWidth = '1.4px'; containerEl.style.borderStyle = 'solid';
             }
             bindPopupEvents(containerEl, st, null);
         } else {
-            if (markerObj._lastMode !== 'normal') {
-                containerEl.className = 'station-marker';
-                containerEl.style.width = '';
-                containerEl.style.height = '';
-                containerEl.style.border = 'none';
-                nodeEl.style.display = 'flex';
-                nodeEl.style.alignItems = 'center';
-                nodeEl.style.justifyContent = 'center';
-                nodeEl.style.position = 'relative';
-                nodeEl.style.boxSizing = 'border-box';
-                nodeEl.style.padding = '0';
-                nodeEl.style.margin = '0';
-                nodeEl.style.lineHeight = '1';
-                nodeEl.style.textAlign = 'center';
-                nodeEl.style.whiteSpace = 'nowrap';
-                markerObj._lastMode = 'normal';
-            }
+            containerEl.className = 'station-marker';
+            const node = document.createElement('div');
+            node.className = 'station-node';
 
-            // 更新尺寸样式 (历史模式 vs 实时模式)
+            node.style.display = 'flex';
+            node.style.alignItems = 'center';
+            node.style.justifyContent = 'center';
+            node.style.position = 'relative';
+            node.style.boxSizing = 'border-box';
+            node.style.padding = '0';
+            node.style.margin = '0';
+            node.style.lineHeight = '1';
+            node.style.textAlign = 'center';
+            node.style.whiteSpace = 'nowrap';
+            
             if (!STATE.isHistory) {
-                nodeEl.style.width = '24px'; nodeEl.style.height = '24px';
-                nodeEl.style.borderRadius = '50%'; nodeEl.style.fontSize = '13px';
+                node.style.width = '24px';
+                node.style.height = '24px';
+                node.style.borderRadius = '50%';
+                node.style.fontSize = '13px';
             } else {
-                nodeEl.style.width = '24px'; nodeEl.style.height = '16px';
-                nodeEl.style.borderRadius = '4px'; nodeEl.style.fontSize = '12px';
+                node.style.width = '24px';
+                node.style.height = '16px';
+                node.style.borderRadius = '4px';
+                node.style.fontSize = '12px';
             }
+            
+            node.style.backgroundColor = hexColor;
+            node.style.color = getTextColorForBackground(hexColor);
+            node.innerText = nodeValue;
+            containerEl.appendChild(node);
 
-            // 属性增量更新
-            if (markerObj._lastColor !== hexColor) {
-                nodeEl.style.backgroundColor = hexColor;
-                nodeEl.style.color = getTextColorForBackground(hexColor);
-                markerObj._lastColor = hexColor;
-            }
-
-            if (markerObj._lastValue !== nodeValue) {
-                textEl.innerText = nodeValue;
-                markerObj._lastValue = nodeValue;
-            }
-
-            // Canvas 倒计时环绘制与透明度控制
             if (!STATE.isHistory) {
                 const ageSeconds = currentSystemSec - matchedRecord.unixTime;
                 if (ageSeconds <= 3600) {
-                    canvasEl.style.display = 'block';
+                    const canvas = document.createElement('canvas');
+                    canvas.className = 'ring-canvas';
+                    canvas.width = 32; canvas.height = 32;
+
+                    canvas.style.position = 'absolute';
+                    canvas.style.top = '50%';
+                    canvas.style.left = '50%';
+                    canvas.style.transform = 'translate(-50%, -50%)';
+                    canvas.style.pointerEvents = 'none';
+
+                    const ctx = canvas.getContext('2d');
                     const ratio = 1 - (ageSeconds / 3600);
+                    ctx.clearRect(0, 0, 32, 32);
                     
-                    // 仅当倒计时比例有显著变化时重绘 Canvas
-                    if (Math.abs((markerObj._lastAgeRatio || 0) - ratio) > 0.005) {
-                        const ctx = canvasEl.getContext('2d');
-                        ctx.clearRect(0, 0, 32, 32);
-                        ctx.strokeStyle = '#202020';
-                        const cx = 16, cy = 16;
-                        const startAngle = -Math.PI / 2;
-                        const endAngle = (-Math.PI / 2) + (Math.PI * 2 * ratio);
+                    ctx.strokeStyle = '#202020';
+                    const cx = 16, cy = 16;
+                    const startAngle = -Math.PI / 2;
+                    const endAngle = (-Math.PI / 2) + (Math.PI * 2 * ratio);
 
+                    if (st.level === '国控') {
+                        ctx.lineWidth = 2.6;
                         ctx.beginPath();
-                        if (st.level === '国控') {
-                            ctx.lineWidth = 2.6;
-                            ctx.arc(cx, cy, 14, startAngle, endAngle);
-                            ctx.stroke();
-                        } else if (st.level === '省控') {
-                            ctx.lineWidth = 1;
-                            ctx.arc(cx, cy, 14.3, startAngle, endAngle);
-                            ctx.stroke();
-                            ctx.beginPath();
-                            ctx.arc(cx, cy, 12, startAngle, endAngle);
-                            ctx.stroke();
-                        } else {
-                            ctx.lineWidth = 1.2;
-                            ctx.arc(cx, cy, 14, startAngle, endAngle);
-                            ctx.stroke();
-                        }
-                        markerObj._lastAgeRatio = ratio;
+                        ctx.arc(cx, cy, 14, startAngle, endAngle);
+                        ctx.stroke();
+                    } else if (st.level === '省控') {
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, 14.3, startAngle, endAngle);
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, 12, startAngle, endAngle);
+                        ctx.stroke();
+                    } else {
+                        ctx.lineWidth = 1.2;
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, 14, startAngle, endAngle);
+                        ctx.stroke();
                     }
-                } else {
-                    canvasEl.style.display = 'none';
-                    if (ageSeconds <= 7200) {
-                        const opacity = 1 - ((ageSeconds - 3600) / 3600);
-                        containerEl.style.opacity = opacity;
-                    }
-                }
-            } else {
-                canvasEl.style.display = 'none';
-            }
 
+                    node.appendChild(canvas);
+                } else if (ageSeconds > 3600 && ageSeconds <= 7200) {
+                    const opacity = 1 - ((ageSeconds - 3600) / 3600);
+                    containerEl.style.opacity = opacity;
+                }
+            }
             bindPopupEvents(containerEl, st, matchedRecord);
         }
     });
