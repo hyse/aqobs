@@ -7,7 +7,18 @@ const STATE = {
     isHistory: false,
     currentTimestamp: null,
     timeTimelineList: [],
-    markerInstances: [],    // 保留，我们将主要使用下面的 markerMap
+    // 🕵️‍♂️【陷阱代码】：谁只要触碰 markerInstances，立刻在控制台打印调用栈！
+    get markerInstances() {
+        console.group('🚨 抓到现形了！以下代码在偷偷【读取】markerInstances：');
+        console.trace(); // 打印调用栈，直接显示是哪个文件、第几行
+        console.groupEnd();
+        return [];
+    },
+    set markerInstances(val) {
+        console.group('🚨 抓到现形了！以下代码在偷偷【修改】markerInstances：');
+        console.trace();
+        console.groupEnd();
+    },
     markerMap: new Map(),   // 【新增：用于 O(1) 级站点 Marker 内存复用映射】
     hourlyCache: new Map(), // 新增：用于缓存当前整点从小端 CDN 拉回来的中括号时序记录
     playInterval: null,
@@ -765,108 +776,7 @@ function getTextColorForBackground(colorStr) {
     return brightness > 170 ? '#727272' : '#ffffff';
 }
 
-/**
- * 1. 创建并初始化 Marker 实例（仅在首次创建站点 Marker 时调用一次）
- */
-function createMarkerInstance(station) {
-  // 1.1 主容器
-  const containerEl = document.createElement('div');
-  containerEl.className = 'custom-marker';
-  containerEl.style.position = 'relative';
-
-  // 1.2 倒计时/状态 Canvas 节点
-  const canvasEl = document.createElement('canvas');
-  canvasEl.className = 'marker-canvas';
-  const dpr = window.devicePixelRatio || 1;
-  canvasEl.width = 32 * dpr;
-  canvasEl.height = 32 * dpr;
-  canvasEl.style.width = '32px';
-  canvasEl.style.height = '32px';
-
-  // 1.3 数值/文字显示节点
-  const nodeEl = document.createElement('div');
-  nodeEl.className = 'marker-node';
-
-  // 组装 DOM 结构（仅此一次）
-  containerEl.appendChild(canvasEl);
-  containerEl.appendChild(nodeEl);
-
-  // 1.4 创建 MapLibre Marker
-  const marker = new maplibregl.Marker({ element: containerEl })
-    .setLngLat([station.longitude, station.latitude]);
-
-  // 1.5 返回完整的对象结构，缓存节点与渲染状态
-  return {
-    marker,
-    containerEl,
-    canvasEl,
-    nodeEl,
-    // 状态缓存（用于对比，避免无效 DOM/Canvas 操作）
-    _state: {
-      value: null,
-      bgColor: null,
-      opacity: null,
-      timestamp: null
-    }
-  };
-}
-
-/**
- * 2. 高效更新 Marker 内容（渲染循环中频繁调用）
- */
-function updateMarkerInstance(markerObj, station, displayData) {
-  const { nodeEl, canvasEl, _state } = markerObj;
-  const { valueStr, bgColor, opacity, timestamp } = displayData;
-
-  // 2.1 增量更新数值（仅在变动时操作 DOM）
-  if (_state.value !== valueStr) {
-    nodeEl.textContent = valueStr;
-    _state.value = valueStr;
-  }
-
-  // 2.2 增量更新背景色与透明度
-  if (_state.bgColor !== bgColor || _state.opacity !== opacity) {
-    nodeEl.style.backgroundColor = bgColor;
-    nodeEl.style.opacity = opacity;
-    _state.bgColor = bgColor;
-    _state.opacity = opacity;
-  }
-
-  // 2.3 按需重绘 Canvas 倒计时环
-  if (_state.timestamp !== timestamp) {
-    drawCountdownRing(canvasEl, timestamp);
-    _state.timestamp = timestamp;
-  }
-}
-
-/**
- * 3. 绘制 Canvas 倒计时环（支持高分屏 DPR 缩放）
- */
-function drawCountdownRing(canvas, timestamp) {
-  const ctx = canvas.getContext('2d');
-  const dpr = window.devicePixelRatio || 1;
-  const size = 32 * dpr;
-  
-  ctx.clearRect(0, 0, size, size);
-
-  // 示例：根据数据时效计算角度并绘制
-  const now = Math.floor(Date.now() / 1000);
-  const diffSec = Math.max(0, now - timestamp);
-  const progress = Math.max(0, 1 - diffSec / 3600); // 1小时倒计时
-
-  ctx.save();
-  ctx.lineWidth = 2.5 * dpr;
-  ctx.strokeStyle = progress < 0.2 ? '#ff4d4f' : '#1890ff';
-  
-  ctx.beginPath();
-  ctx.arc(size / 2, size / 2, (size / 2) - (2 * dpr), -Math.PI / 2, (-Math.PI / 2) + (Math.PI * 2 * progress));
-  ctx.stroke();
-  ctx.restore();
-}
-
-/**
- * 4. 业务调用的主渲染逻辑
- */
+// 高动态位掩码过滤与 Canvas 站点标记控制系统（Zero-DOM-Tearing 性能优化版）
 function renderMapMarkers() {
     closeAllPopups();
 
