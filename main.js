@@ -7,7 +7,6 @@ const STATE = {
     isHistory: false,
     currentTimestamp: null,
     timeTimelineList: [],
-    markerInstances: [],    // 保留，我们将主要使用下面的 markerMap
     markerMap: new Map(),   // 【新增：用于 O(1) 级站点 Marker 内存复用映射】
     hourlyCache: new Map(), // 新增：用于缓存当前整点从小端 CDN 拉回来的中括号时序记录
     playInterval: null,
