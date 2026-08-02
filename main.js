@@ -769,9 +769,6 @@ function getTextColorForBackground(colorStr) {
 function renderMapMarkers() {
     closeAllPopups();
 
-    STATE.markerInstances.forEach(m => m.remove());
-    STATE.markerInstances = [];
-
     const mask = STATE.urlParams.level;
     const currentSystemSec = Math.floor(Date.now() / 1000);
     const recordMap = STATE.hourlyCache;
@@ -783,15 +780,85 @@ function renderMapMarkers() {
         if (st.level !== '国控' && st.level !== '省控' && mask[2] === '1') visible = true;
         if (mask === '000') visible = true;
 
-        if (!visible) return;
+        let markerObj = STATE.markerMap.get(st.id);
 
-        const containerEl = document.createElement('div');
-        containerEl.className = 'station-marker';
+        // 不符合层级掩码，直接隐藏 Marker，避免重新销毁
+        if (!visible) {
+            if (markerObj) markerObj.containerEl.style.display = 'none';
+            return;
+        }
+
         let matchedRecord = null;
+        let nodeValue = '';
+        let rawVal = 0;
+        let hexColor = '#9ca3af';
+        let isEmptyMode = (mask === '000');
 
-        if (mask === '000') {
+        if (!isEmptyMode) {
+            matchedRecord = recordMap.get(st.id);
+            if (!matchedRecord) {
+                if (markerObj) markerObj.containerEl.style.display = 'none';
+                return;
+            }
+
+            if (!STATE.isHistory && STATE.urlParams.pol !== 'aqi') {
+                if (matchedRecord[STATE.urlParams.pol] === null || matchedRecord[STATE.urlParams.pol] === undefined) {
+                    if (markerObj) markerObj.containerEl.style.display = 'none';
+                    return;
+                }
+            }
+
+            if (STATE.urlParams.pol === 'aqi') {
+                rawVal = getStationCalculatedAqi(matchedRecord, STATE.activeRule);
+                if (rawVal === null) {
+                    if (markerObj) markerObj.containerEl.style.display = 'none';
+                    return;
+                }
+                nodeValue = rawVal;
+            } else {
+                rawVal = matchedRecord[STATE.urlParams.pol];
+                if (rawVal === null) {
+                    if (markerObj) markerObj.containerEl.style.display = 'none';
+                    return;
+                }
+                
+                if (STATE.urlParams.pol === 'co') {
+                    rawVal = rawVal / 1000;
+                    nodeValue = rawVal.toFixed(1);
+                } else {
+                    nodeValue = Math.round(rawVal);
+                }
+            }
+
+            if (!STATE.isHistory) {
+                const ageSeconds = currentSystemSec - matchedRecord.unixTime;
+                if (ageSeconds > 7200) {
+                    if (markerObj) markerObj.containerEl.style.display = 'none';
+                    return;
+                }
+            }
+
+            hexColor = getColorAndLabel(STATE.urlParams.pol, rawVal, STATE.activeRule).color;
+        }
+
+        // 核心内存池：仅在 Marker 不存在时才执行实例化
+        if (!markerObj) {
+            const containerEl = document.createElement('div');
+            const marker = new maplibregl.Marker({ element: containerEl, anchor: 'center' })
+                .setLngLat([st.lon, st.lat])
+                .addTo(map);
+            markerObj = { marker, containerEl };
+            STATE.markerMap.set(st.id, markerObj);
+        }
+
+        const containerEl = markerObj.containerEl;
+        containerEl.style.display = 'flex';
+        containerEl.style.opacity = '1';
+        containerEl.innerHTML = ''; // 清空上一帧内部 DOM
+
+        if (isEmptyMode) {
             const size = st.level === '国控' ? 14 : 12;
-            containerEl.className = 'empty-station';
+            containerEl.className = 'station-marker empty-station';
             containerEl.style.width = `${size}px`;
             containerEl.style.height = `${size}px`;
             containerEl.style.borderColor = '#1f2937';
@@ -805,45 +872,18 @@ function renderMapMarkers() {
             }
             bindPopupEvents(containerEl, st, null);
         } else {
-            matchedRecord = recordMap.get(st.id);
-            if (!matchedRecord) return; 
-
-            if (!STATE.isHistory && STATE.urlParams.pol !== 'aqi') {
-                if (matchedRecord[STATE.urlParams.pol] === null || matchedRecord[STATE.urlParams.pol] === undefined) return;
-            }
-
-            let nodeValue = '';
-            let rawVal = 0;
-            let hexColor = '#9ca3af';
-
-            if (STATE.urlParams.pol === 'aqi') {
-                rawVal = getStationCalculatedAqi(matchedRecord, STATE.activeRule);
-                if (rawVal === null) return;
-                nodeValue = rawVal;
-            } else {
-                rawVal = matchedRecord[STATE.urlParams.pol];
-                if (rawVal === null) return;
-                
-                if (STATE.urlParams.pol === 'co') {
-                    rawVal = rawVal / 1000; // 毫克换算
-                    nodeValue = rawVal.toFixed(1);
-                } else {
-                    nodeValue = Math.round(rawVal);
-                }
-            }
-            hexColor = getColorAndLabel(STATE.urlParams.pol, rawVal, STATE.activeRule).color;
-
+            containerEl.className = 'station-marker';
             const node = document.createElement('div');
             node.className = 'station-node';
 
-            node.style.display = 'flex';           // 核心修正：从 inline-flex 改为 flex，消除绝对定位的水平挤压
-            node.style.alignItems = 'center';      // 文字垂直居中
-            node.style.justifyContent = 'center';    // 文字水平居中
-            node.style.position = 'relative';       // 为 Canvas 提供绝对定位父级锚点
+            node.style.display = 'flex';
+            node.style.alignItems = 'center';
+            node.style.justifyContent = 'center';
+            node.style.position = 'relative';
             node.style.boxSizing = 'border-box';
-            node.style.padding = '0';               // 强行清空任何可能继承自全局的内边距
-            node.style.margin = '0';                // 强行清空任何可能继承自全局的外边距
-            node.style.lineHeight = '1';            // 核心修正：强制行高为 1，消除数字因字体基线留白导致的视觉上偏
+            node.style.padding = '0';
+            node.style.margin = '0';
+            node.style.lineHeight = '1';
             node.style.textAlign = 'center';
             node.style.whiteSpace = 'nowrap';
             
@@ -861,7 +901,6 @@ function renderMapMarkers() {
             
             node.style.backgroundColor = hexColor;
             node.style.color = getTextColorForBackground(hexColor);
-            
             node.innerText = nodeValue;
             containerEl.appendChild(node);
 
@@ -875,17 +914,14 @@ function renderMapMarkers() {
                     canvas.style.position = 'absolute';
                     canvas.style.top = '50%';
                     canvas.style.left = '50%';
-                    canvas.style.transform = 'translate(-50%, -50%)'; // 完美的几何质心对齐
-                    canvas.style.pointerEvents = 'none';              // 穿透鼠标事件，防止阻挡点击
+                    canvas.style.transform = 'translate(-50%, -50%)';
+                    canvas.style.pointerEvents = 'none';
 
                     const ctx = canvas.getContext('2d');
                     const ratio = 1 - (ageSeconds / 3600);
-
                     ctx.clearRect(0, 0, 32, 32);
                     
-                    const RING_COLOR = '#202020';
-                    ctx.strokeStyle = RING_COLOR;
-
+                    ctx.strokeStyle = '#202020';
                     const cx = 16, cy = 16;
                     const startAngle = -Math.PI / 2;
                     const endAngle = (-Math.PI / 2) + (Math.PI * 2 * ratio);
@@ -895,8 +931,7 @@ function renderMapMarkers() {
                         ctx.beginPath();
                         ctx.arc(cx, cy, 14, startAngle, endAngle);
                         ctx.stroke();
-                    } 
-                    else if (st.level === '省控') {
+                    } else if (st.level === '省控') {
                         ctx.lineWidth = 1;
                         ctx.beginPath();
                         ctx.arc(cx, cy, 14.3, startAngle, endAngle);
@@ -904,8 +939,7 @@ function renderMapMarkers() {
                         ctx.beginPath();
                         ctx.arc(cx, cy, 12, startAngle, endAngle);
                         ctx.stroke();
-                    } 
-                    else {
+                    } else {
                         ctx.lineWidth = 1.2;
                         ctx.beginPath();
                         ctx.arc(cx, cy, 14, startAngle, endAngle);
@@ -916,17 +950,10 @@ function renderMapMarkers() {
                 } else if (ageSeconds > 3600 && ageSeconds <= 7200) {
                     const opacity = 1 - ((ageSeconds - 3600) / 3600);
                     containerEl.style.opacity = opacity;
-                } else {
-                    return;
                 }
             }
             bindPopupEvents(containerEl, st, matchedRecord);
         }
-
-        const marker = new maplibregl.Marker({ element: containerEl, anchor: 'center' })
-            .setLngLat([st.lon, st.lat])
-            .addTo(map);
-        STATE.markerInstances.push(marker);
     });
 }
 
