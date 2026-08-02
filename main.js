@@ -517,6 +517,15 @@ function syncUIStateAndURL() {
     pushStateToURL();
 }
 
+setInterval(() => {
+        if (STATE.isHistory) return; // 历史模式下静默，不干扰历史时间显示
+        const timeBox = document.getElementById('time-display-box');
+        if (!timeBox) return;
+        const d = new Date();
+        timeBox.innerText = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+        timeBox.setAttribute('data-tooltip', `${d.getDate()}日${d.getHours()}时`);
+}, 1000);
+
 // 常规组件的联动改变响应
 document.getElementById('pol-select').onchange = (e) => { 
     STATE.urlParams.pol = e.target.value; 
