@@ -1034,7 +1034,7 @@ const helpTexts = [
     "<h4>美国 EPA 空气质量规范</h4><p>契合美标分段浓度阶梯函数。针对特定颗粒物在低浓度边界的健康响应进行了针对性的高阶动态加权。</p>",
     "<h4>数据源底层定义</h4><p>数据源挂载于本地 <code>/data/aqdata.db</code>。站点坐标采用无偏 WGS-84 投影地理坐标系存储，与底图几何中心轴完全对齐。</p>",
     "<h4>全生命周期极客快捷键</h4><ul><li><b>W / S</b> : 上下循环选择显示指标 (CO~AQI)</li><li><b>Q / E</b> : 升降轮换多国 AQI 标准</li><li><b>A / D</b> : 历史时序向后/向前回溯（长按触发自动放映）</li><li><b>T</b> : 唤醒/隐藏时间整点下拉选择网格</li><li><b>R</b> : 一键消除时轴切回实时追踪视图</li><li><b>I</b> : 弹出/关闭本系统说明看板</li></ul>",
-    "<h4>关于</h4><p>aqobs v2.6.0<br/>High-Resolution Spatial-Temporal Environmental Spatial Terminal.</p>"
+    "<h4>关于</h4><p>aqobs v0.2<br/>High-Resolution Spatial-Temporal Environmental Spatial Terminal.</p>"
 ];
 
 function switchTab(idx) {
