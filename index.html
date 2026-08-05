@@ -121,25 +121,6 @@
         .time-drop-item { display: flex; justify-content: space-between; padding: 6px 12px; font-size: 12px; cursor: pointer; border-bottom: 1px solid #f3f4f6; }
         .time-drop-item:hover, .time-drop-item.active { background-color: #eff6ff; font-weight: bold; color: var(--accent-color); }
         .time-drop-item .time-ago { color: #9ca3af; margin-left: 15px; }
-        .time-drop-item .time-date { margin-left: 6px; font-weight: normal; color: #6b7280; font-size: 11px; } /* 新增：日期修饰字体，不破坏原标题对齐 */
-
-        /* 移动端转换成类似原生 Select 的居中弹窗样式 */
-        /* 逻辑视口 <= 640px，或者触屏设备在窄屏/平板模式下生效 */
-        @media (max-width: 640px) {
-            #time-dropdown-container {
-                position: fixed;
-                top: 50%;
-                left: 50%;
-                right: auto;
-                bottom: auto;
-                transform: translate(-50%, -50%);
-                width: 80vw !important;
-                max-width: 280px;
-                max-height: 60vh;
-                border-radius: 8px;
-                box-shadow: 0 10px 25px rgba(0,0,0,0.25);
-            }
-        }
 
         /* 历史控制轴组件 */
         .slider-container { display: flex; align-items: center; gap: 6px; width: 100%; position: relative; }

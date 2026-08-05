@@ -360,12 +360,8 @@ function buildTimeDropdownDOM() {
 
     historyOrderList.forEach(ts => {
         const date = new Date(ts * 1000);
-        const hours = date.getHours();
         const hh = String(date.getHours()).padStart(2, '0') + ':00';
         const hoursAgo = Math.floor((currentHourFloor - ts) / 3600);
-
-        // 仅在 0 时和 12 时增加日期显示
-        const dateStr = (hours === 0 || hours === 12) ? `<span class="time-date">${date.getDate()}日</span>` : '';
 
         const item = document.createElement('div');
         item.className = 'time-drop-item';
@@ -615,13 +611,9 @@ triggerBtn.onclick = (e) => {
     const isOpen = dropBox.style.display === 'block';
     dropBox.style.display = isOpen ? 'none' : 'block';
     if (!isOpen) {
-        if (window.innerWidth > 640) {
-            const boxLeft = document.getElementById('time-display-box').getBoundingClientRect().left;
-            const btnRight = triggerBtn.getBoundingClientRect().right;
-            dropBox.style.width = `${btnRight - boxLeft}px`;
-        } else {
-            dropBox.style.width = ''; // 移动端清空内联宽度，采用 CSS fixed 弹窗样式
-        }
+        const boxLeft = document.getElementById('time-display-box').getBoundingClientRect().left;
+        const btnRight = triggerBtn.getBoundingClientRect().right;
+        dropBox.style.width = `${btnRight - boxLeft}px`;
     }
 };
 document.addEventListener('click', () => { dropBox.style.display = 'none'; });
