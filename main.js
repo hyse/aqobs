@@ -879,7 +879,7 @@ function renderMapMarkers() {
                     canvas.style.pointerEvents = 'none';              // 穿透鼠标事件，防止阻挡点击
 
                     const ctx = canvas.getContext('2d');
-                    const ratio = 1 - (ageSeconds / 3600);
+                    const ratio = ageSeconds / 3600;
 
                     ctx.clearRect(0, 0, 32, 32);
                     
