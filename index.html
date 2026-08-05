@@ -111,8 +111,39 @@
             transition-delay: 1s; /* 核心控制：鼠标移入并停留满 1s 后才显示 */
         }
 
+        /* 时间选择复合体组件 */
+        .time-select-wrapper { position: relative; display: inline-block; }
+        #time-dropdown-container {
+            position: absolute; bottom: 105%; right: 0; left: auto; background: white;
+            border: 1px solid var(--border-color); border-radius: 4px; box-shadow: 0 -4px 15px rgba(0,0,0,0.15);
+            max-height: 240px; overflow-y: auto; display: none; z-index: 1000;
+        }
+        .time-drop-item { display: flex; justify-content: space-between; padding: 6px 12px; font-size: 12px; cursor: pointer; border-bottom: 1px solid #f3f4f6; }
         .time-drop-item:hover, .time-drop-item.active { background-color: #eff6ff; font-weight: bold; color: var(--accent-color); }
         .time-drop-item .time-ago { color: #9ca3af; margin-left: 15px; }
+
+        /* 移动端时间选择器 Select 弹窗形态重置 */
+        @media (max-width: 640px) {
+            #time-dropdown-container {
+                position: fixed !important;
+                top: 50% !important;
+                left: 50% !important;
+                bottom: auto !important;
+                right: auto !important;
+                transform: translate(-50%, -50%) !important;
+                width: 82vw !important;
+                max-width: 320px !important;
+                max-height: 55vh !important;
+                border-radius: 8px !important;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3) !important;
+                border: 1px solid var(--border-color) !important;
+                z-index: 10000 !important;
+            }
+            .time-drop-item {
+                padding: 11px 16px; /* 扩大点击区域，提升移动端触控体验 */
+                font-size: 14px;
+            }
+        }
 
         /* 历史控制轴组件 */
         .slider-container { display: flex; align-items: center; gap: 6px; width: 100%; position: relative; }
@@ -211,7 +242,10 @@
             </select>
             <select id="aqi-select"></select>
             <div id="time-display-box">--:--</div>
-            <select id="time-select-btn"></select>
+            <div class="time-select-wrapper">
+                <button id="time-select-btn">时间选择</button>
+                <div id="time-dropdown-container"></div>
+            </div>
         </div>
     </div>
     <script src="./main.js"></script>

@@ -352,36 +352,28 @@ function getColorAndLabel(polType, value, rule) {
 
 // 构造时间整点回溯下拉选单
 function buildTimeDropdownDOM() {
-    const select = document.getElementById('time-select-btn');
-    if (!select) return;
-    select.innerHTML = '';
-
-    // 默认/实时视图占位项：保证实时视图下框面显示“时间选择”
-    const defaultOpt = document.createElement('option');
-    defaultOpt.value = 'default';
-    defaultOpt.innerText = '时间选择';
-    defaultOpt.hidden = true;
-    defaultOpt.disabled = true;
-    select.appendChild(defaultOpt);
+    const container = document.getElementById('time-dropdown-container');
+    container.innerHTML = '';
     
     const currentHourFloor = Math.floor(Date.now() / 1000 / 3600) * 3600;
-    // 正序遍历：最远（最早）的在上面，最近的在下面
-    STATE.timeTimelineList.forEach(ts => {
+    const historyOrderList = STATE.timeTimelineList; // 自下而上反向，最上面是最早的数据
+
+    historyOrderList.forEach(ts => {
         const date = new Date(ts * 1000);
-        const hour = date.getHours();
-        const hh = String(hour).padStart(2, '0') + ':00';
+        const hh = String(date.getHours()).padStart(2, '0') + ':00';
         const hoursAgo = Math.floor((currentHourFloor - ts) / 3600);
 
-        const is0or12 = (hour === 0 || hour === 12);
-        // 0时与12时在小时右侧加日期，非0/12时补齐等宽空格 (\u00A0)，保障右侧距今小时数精准对齐
-        const dateStr = is0or12 ? ` ${date.getDate()}日` : '';
-        const paddedDate = is0or12 ? dateStr.padEnd(5, '\u00A0') : '\u00A0\u00A0\u00A0\u00A0\u00A0';
-        const text = `${hh}${paddedDate}\u00A0\u00A0\u00A0\u00A0${hoursAgo}`;
-
-        const opt = document.createElement('option');
-        opt.value = ts;
-        opt.innerText = text;
-        select.appendChild(opt);
+        const item = document.createElement('div');
+        item.className = 'time-drop-item';
+        item.dataset.ts = ts;
+        item.innerHTML = `<span>${hh}</span><span class="time-ago">${hoursAgo}</span>`;
+        
+        item.onclick = (e) => {
+            e.stopPropagation();
+            enterHistoryView(ts);
+            container.style.display = 'none';
+        };
+        container.appendChild(item);
     });
 
     buildTimeSliderTicks();
@@ -564,11 +556,15 @@ function syncUIStateAndURL() {
         cursor.title = `${d.getDate()}日${d.getHours()}时`;
     }
 
-    // 同步时间选择下拉框选中值：历史模式显示选中时间戳，实时模式显示“时间选择”
-    const timeSelectBtn = document.getElementById('time-select-btn');
-    if (timeSelectBtn) {
-        timeSelectBtn.value = STATE.isHistory ? String(STATE.currentTimestamp) : 'default';
-    }
+    // 同步下拉框的高亮定位
+    document.querySelectorAll('.time-drop-item').forEach(item => {
+        const ts = parseInt(item.dataset.ts);
+        if (STATE.isHistory && ts === STATE.currentTimestamp) {
+            item.classList.add('active');
+        } else {
+            item.classList.remove('active');
+        }
+    });
 
     // 动态检查对齐上下层组件线宽
     const polEl = document.getElementById('pol-select');
@@ -608,16 +604,27 @@ document.getElementById('aqi-select').onchange = (e) => {
 };
 document.getElementById('time-display-box').onclick = () => enterRealtimeView();
 
-const timeSelectBtn = document.getElementById('time-select-btn');
-if (timeSelectBtn) {
-    timeSelectBtn.onchange = (e) => {
-        const ts = parseInt(e.target.value, 10);
-        if (!isNaN(ts)) {
-            enterHistoryView(ts);
+const triggerBtn = document.getElementById('time-select-btn');
+const dropBox = document.getElementById('time-dropdown-container');
+dropBox.onclick = (e) => { e.stopPropagation(); };
+triggerBtn.onclick = (e) => {
+    e.stopPropagation();
+    const isOpen = dropBox.style.display === 'block';
+    dropBox.style.display = isOpen ? 'none' : 'block';
+    if (!isOpen) {
+        // 桌面端保持原有精确定位宽度，移动端清除内联 styles 采用 CSS 弹窗布局
+        if (window.innerWidth > 640) {
+            const boxLeft = document.getElementById('time-display-box').getBoundingClientRect().left;
+            const btnRight = triggerBtn.getBoundingClientRect().right;
+            dropBox.style.width = `${btnRight - boxLeft}px`;
+        } else {
+            dropBox.style.width = '';
         }
-        e.target.blur(); // 选择完成后清除高亮焦点
-    };
-}
+        // 关键点：打开下拉框后，自动将滚轮聚焦并拉至最底部（最近时间点）
+        dropBox.scrollTop = dropBox.scrollHeight;
+    }
+};
+document.addEventListener('click', () => { dropBox.style.display = 'none'; });
 
 // 长按自动放映循环机制驱动
 function startAutoPlay(direction) {
@@ -700,18 +707,7 @@ function setupShortcutEvents() {
             syncUIStateAndURL(); renderMapMarkers();
         }
         if (k === 'R') { e.preventDefault(); enterRealtimeView(); }
-        if (k === 'T') {
-            e.preventDefault();
-            const timeSelectBtn = document.getElementById('time-select-btn');
-            if (timeSelectBtn) {
-                if (typeof timeSelectBtn.showPicker === 'function') {
-                    timeSelectBtn.showPicker();
-                } else {
-                    timeSelectBtn.focus();
-                    timeSelectBtn.click();
-                }
-            }
-        }
+        if (k === 'T') { e.preventDefault(); triggerBtn.click(); }
         if (k === 'I') { e.preventDefault(); toggleInfoPanel(); }
 
         if (k === 'A') {
