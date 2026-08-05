@@ -618,7 +618,8 @@ triggerBtn.onclick = (e) => {
             const btnRight = triggerBtn.getBoundingClientRect().right;
             dropBox.style.width = `${btnRight - boxLeft}px`;
         } else {
-            dropBox.style.width = '';
+            const polLeft = document.getElementById('pol-select').getBoundingClientRect().left;
+            dropBox.style.width = `${btnRight - polLeft}px`;
         }
         // 关键点：打开下拉框后，自动将滚轮聚焦并拉至最底部（最近时间点）
         dropBox.scrollTop = dropBox.scrollHeight;
