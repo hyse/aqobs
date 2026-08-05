@@ -122,23 +122,24 @@
         .time-drop-item:hover, .time-drop-item.active { background-color: #eff6ff; font-weight: bold; color: var(--accent-color); }
         .time-drop-item .time-ago { color: #9ca3af; margin-left: 15px; }
 
-        /* 移动端时间选择器弹窗：左对齐 pol-select，右对齐 time-select-btn，悬浮于 lower-control-row 上方 */
+        /* 移动端时间选择器弹窗：精确定位对齐 */
         @media (max-width: 640px) {
             #time-dropdown-container {
                 position: absolute !important;
-                bottom: calc(100% + 10px) !important; /* 始终悬浮于 lower-control-row 板块正上方 10px 处 */
+                bottom: calc(100% + 10px) !important; /* 悬浮于 lower-control-row 正上方 10px */
                 right: 0 !important;
                 left: auto !important;
                 top: auto !important;
                 transform: none !important;
-                max-height: 45vh !important; /* 限制最大高度，防止超出屏幕顶部 */
+                box-sizing: border-box !important; /* 关键：强制 width 包含边框 padding，实现像素级对齐 */
+                max-height: 45vh !important;
                 border-radius: 8px !important;
                 box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2) !important;
                 z-index: 10000 !important;
             }
             
             .time-drop-item {
-                padding: 10px 14px; /* 适度扩大触摸响应区域 */
+                padding: 10px 14px;
                 font-size: 13px;
             }
         }

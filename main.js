@@ -612,14 +612,15 @@ triggerBtn.onclick = (e) => {
     const isOpen = dropBox.style.display === 'block';
     dropBox.style.display = isOpen ? 'none' : 'block';
     if (!isOpen) {
-        // 桌面端保持原有精确定位宽度，移动端清除内联 styles 采用 CSS 弹窗布局
+        const btnRight = triggerBtn.getBoundingClientRect().right;
         if (window.innerWidth > 640) {
+            // 桌面端：左侧精准对齐 #time-display-box
             const boxLeft = document.getElementById('time-display-box').getBoundingClientRect().left;
-            const btnRight = triggerBtn.getBoundingClientRect().right;
-            dropBox.style.width = `${btnRight - boxLeft}px`;
+            dropBox.style.width = `${Math.round(btnRight - boxLeft)}px`;
         } else {
+            // 移动端：左侧精准对齐 #pol-select 的左边缘
             const polLeft = document.getElementById('pol-select').getBoundingClientRect().left;
-            dropBox.style.width = `${btnRight - polLeft}px`;
+            dropBox.style.width = `${Math.round(btnRight - polLeft)}px`;
         }
         // 关键点：打开下拉框后，自动将滚轮聚焦并拉至最底部（最近时间点）
         dropBox.scrollTop = dropBox.scrollHeight;
