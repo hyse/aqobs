@@ -360,6 +360,7 @@ function buildTimeDropdownDOM() {
 
     historyOrderList.forEach(ts => {
         const date = new Date(ts * 1000);
+        const hours = date.getHours();
         const hh = String(date.getHours()).padStart(2, '0') + ':00';
         const hoursAgo = Math.floor((currentHourFloor - ts) / 3600);
 
