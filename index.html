@@ -111,14 +111,6 @@
             transition-delay: 1s; /* 核心控制：鼠标移入并停留满 1s 后才显示 */
         }
 
-        /* 时间选择复合体组件 */
-        .time-select-wrapper { position: relative; display: inline-block; }
-        #time-dropdown-container {
-            position: absolute; bottom: 105%; right: 0; left: auto; background: white;
-            border: 1px solid var(--border-color); border-radius: 4px; box-shadow: 0 -4px 15px rgba(0,0,0,0.15);
-            max-height: 240px; overflow-y: auto; display: none; z-index: 1000;
-        }
-        .time-drop-item { display: flex; justify-content: space-between; padding: 6px 12px; font-size: 12px; cursor: pointer; border-bottom: 1px solid #f3f4f6; }
         .time-drop-item:hover, .time-drop-item.active { background-color: #eff6ff; font-weight: bold; color: var(--accent-color); }
         .time-drop-item .time-ago { color: #9ca3af; margin-left: 15px; }
 
@@ -219,10 +211,7 @@
             </select>
             <select id="aqi-select"></select>
             <div id="time-display-box">--:--</div>
-            <div class="time-select-wrapper">
-                <button id="time-select-btn">时间选择</button>
-                <div id="time-dropdown-container"></div>
-            </div>
+            <select id="time-select-btn"></select>
         </div>
     </div>
     <script src="./main.js"></script>
