@@ -887,7 +887,7 @@ function renderMapMarkers() {
                     ctx.strokeStyle = RING_COLOR;
 
                     const cx = 16, cy = 16;
-                    const startAngle = -Math.PI / 2;
+                    const startAngle = (-Math.PI / 2) + (Math.PI * 2 * (1 - ratio));
                     const endAngle = (-Math.PI / 2) + (Math.PI * 2 * ratio);
 
                     if (st.level === '国控') {
