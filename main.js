@@ -879,7 +879,7 @@ function renderMapMarkers() {
                     canvas.style.pointerEvents = 'none';              // 穿透鼠标事件，防止阻挡点击
 
                     const ctx = canvas.getContext('2d');
-                    const ratio = ageSeconds / 3600;
+                    const ratio = 1 - (ageSeconds / 3600);
 
                     ctx.clearRect(0, 0, 32, 32);
                     
@@ -887,8 +887,8 @@ function renderMapMarkers() {
                     ctx.strokeStyle = RING_COLOR;
 
                     const cx = 16, cy = 16;
-                    const startAngle = (-Math.PI / 2) + (Math.PI * 2 * ratio);
-                    const endAngle = -Math.PI / 2;
+                    const startAngle = -Math.PI / 2;
+                    const endAngle = (-Math.PI / 2) + (Math.PI * 2 * ratio);
 
                     if (st.level === '国控') {
                         ctx.lineWidth = 2.6;
