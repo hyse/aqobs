@@ -790,7 +790,7 @@ function getTextColorForBackground(colorStr) {
     return brightness > 170 ? '#727272' : '#ffffff';
 }
 
-// 高动态位掩码过滤与 Canvas 站点标记控制系统（具备 DPR 抗锯齿、DOM 复用与实时时间衰减同步）
+// 高动态位掩码过滤与 Canvas 站点标记控制系统（DPR 高清抗锯齿 / 内存 DOM 复用 / 零闪烁定稿版）
 function renderMapMarkers() {
     closeAllPopups();
 
@@ -840,7 +840,7 @@ function renderMapMarkers() {
             }
         }
 
-        // 3. 提取与校验数据（提前至 DOM 复用判断前，防止无效站点误占位）
+        // 3. 提取与校验数据（提前至 DOM 复用拦截前，防止无效站点误占位）
         let matchedRecord = null;
         let nodeValue = '';
         let rawVal = 0;
@@ -862,11 +862,11 @@ function renderMapMarkers() {
 
             if (STATE.urlParams.pol === 'aqi') {
                 rawVal = getStationCalculatedAqi(matchedRecord, STATE.activeRule);
-                if (rawVal === null) return;
+                if (rawVal === null || rawVal === undefined) return;
                 nodeValue = rawVal;
             } else {
                 rawVal = matchedRecord[STATE.urlParams.pol];
-                if (rawVal === null) return;
+                if (rawVal === null || rawVal === undefined) return;
                 
                 if (STATE.urlParams.pol === 'co') {
                     rawVal = rawVal / 1000; // 毫克换算
@@ -878,10 +878,10 @@ function renderMapMarkers() {
             hexColor = getColorAndLabel(STATE.urlParams.pol, rawVal, STATE.activeRule).color;
         }
 
-        // 4. 构造 Marker Key（引入 ageBucket 按分钟粒度更新时间环，兼顾拖拽防闪烁与时间平滑演进）
+        // 4. 构造 Marker Key（含 ageBucket 分钟粒度更新，兼顾拖拽防闪烁与时间平滑演进）
         const ageBucket = (!STATE.isHistory && mask !== '000') ? Math.floor(ageSeconds / 60) : 0;
         const recordTime = matchedRecord ? matchedRecord.unixTime : 0;
-        const markerKey = `${st.id}_${mask}_${STATE.urlParams.pol}_${STATE.urlParams.aqi}_${STATE.isHistory}_${STATE.currentTimestamp}_${recordTime}_${ageBucket}`;
+        const markerKey = `${st.id}_${mask}_${STATE.urlParams.pol}_${STATE.urlParams.aqi}_${STATE.activeRule}_${STATE.isHistory}_${STATE.currentTimestamp}_${recordTime}_${ageBucket}`;
 
         activeStationIds.add(st.id);
 
@@ -953,7 +953,7 @@ function renderMapMarkers() {
                     const canvas = document.createElement('canvas');
                     canvas.className = 'ring-canvas';
 
-                    // 高分屏 DPR 物理像素缩放，解决 Canvas 抗锯齿
+                    // 高分屏 DPR 物理像素缩放，消除 Canvas 抗锯齿
                     const dpr = window.devicePixelRatio || 1;
                     canvas.width = 32 * dpr; 
                     canvas.height = 32 * dpr;
@@ -1017,7 +1017,7 @@ function renderMapMarkers() {
         STATE.markerMap.set(st.id, { marker, key: markerKey });
     });
 
-    // 7. 清理移出视口或失效的 Marker
+    // 7. 按需移除已移出视口或不需要显示的 Marker DOM
     for (const [id, item] of STATE.markerMap.entries()) {
         if (!activeStationIds.has(id)) {
             item.marker.remove();
@@ -1025,7 +1025,7 @@ function renderMapMarkers() {
         }
     }
 
-    // 8. 保持 STATE.markerInstances 数组同步（确保全局向下兼容）
+    // 8. 同步 STATE.markerInstances 数组，确保全局兼容性
     STATE.markerInstances = Array.from(STATE.markerMap.values()).map(item => item.marker);
 }
 
