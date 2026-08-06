@@ -790,7 +790,7 @@ function getTextColorForBackground(colorStr) {
     return brightness > 170 ? '#727272' : '#ffffff';
 }
 
-// 高动态位掩码过滤与 Canvas 站点标记控制系统（支持 O(1) DOM 复用与 DPR 抗锯齿）
+// 高动态位掩码过滤与 Canvas 站点标记控制系统（具备 DPR 抗锯齿、DOM 复用与实时时间衰减同步）
 function renderMapMarkers() {
     closeAllPopups();
 
@@ -820,10 +820,11 @@ function renderMapMarkers() {
         maxLat = rawMaxLat + latMargin;
     }
 
-    // 记录本次渲染视口内有效显示的站点 ID 集合
+    // 记录本次渲染视口内真正有效显示的站点 ID 集合
     const activeStationIds = new Set();
 
     STATE.stations.forEach(st => {
+        // 1. 图层级别掩码过滤
         let visible = false;
         if (st.level === '国控' && mask[0] === '1') visible = true;
         if (st.level === '省控' && mask[1] === '1') visible = true;
@@ -832,45 +833,71 @@ function renderMapMarkers() {
 
         if (!visible) return;
 
+        // 2. 视口裁剪
         if (enableCulling) {
             if (st.lon < minLng || st.lon > maxLng || st.lat < minLat || st.lat > maxLat) {
                 return;
             }
         }
 
+        // 3. 提取与校验数据（提前至 DOM 复用判断前，防止无效站点误占位）
         let matchedRecord = null;
+        let nodeValue = '';
+        let rawVal = 0;
+        let hexColor = '#9ca3af';
+        let ageSeconds = 0;
+
         if (mask !== '000') {
             matchedRecord = recordMap.get(st.id);
             if (!matchedRecord) return;
 
             if (!STATE.isHistory) {
-                const ageSec = currentSystemSec - matchedRecord.unixTime;
-                if (ageSec > 7200) return; // 超过 2 小时无数据不渲染
+                ageSeconds = currentSystemSec - matchedRecord.unixTime;
+                if (ageSeconds > 7200) return; // 超过 2 小时无数据不渲染
 
                 if (STATE.urlParams.pol !== 'aqi') {
                     if (matchedRecord[STATE.urlParams.pol] === null || matchedRecord[STATE.urlParams.pol] === undefined) return;
                 }
             }
+
+            if (STATE.urlParams.pol === 'aqi') {
+                rawVal = getStationCalculatedAqi(matchedRecord, STATE.activeRule);
+                if (rawVal === null) return;
+                nodeValue = rawVal;
+            } else {
+                rawVal = matchedRecord[STATE.urlParams.pol];
+                if (rawVal === null) return;
+                
+                if (STATE.urlParams.pol === 'co') {
+                    rawVal = rawVal / 1000; // 毫克换算
+                    nodeValue = rawVal.toFixed(1);
+                } else {
+                    nodeValue = Math.round(rawVal);
+                }
+            }
+            hexColor = getColorAndLabel(STATE.urlParams.pol, rawVal, STATE.activeRule).color;
         }
 
-        // 构造 Marker 唯一状态 Key（用于检测样式/数据是否发生变化）
+        // 4. 构造 Marker Key（引入 ageBucket 按分钟粒度更新时间环，兼顾拖拽防闪烁与时间平滑演进）
+        const ageBucket = (!STATE.isHistory && mask !== '000') ? Math.floor(ageSeconds / 60) : 0;
         const recordTime = matchedRecord ? matchedRecord.unixTime : 0;
-        const markerKey = `${st.id}_${mask}_${STATE.urlParams.pol}_${STATE.urlParams.aqi}_${STATE.isHistory}_${STATE.currentTimestamp}_${recordTime}`;
+        const markerKey = `${st.id}_${mask}_${STATE.urlParams.pol}_${STATE.urlParams.aqi}_${STATE.isHistory}_${STATE.currentTimestamp}_${recordTime}_${ageBucket}`;
 
         activeStationIds.add(st.id);
 
-        // 【内存复用核心】：若 Marker 已在地图上且状态未改变，直接保持原有 DOM，避免重建引发闪烁
+        // 5. 内存 DOM 复用拦截
         const existing = STATE.markerMap.get(st.id);
         if (existing && existing.key === markerKey) {
             return;
         }
 
-        // 若状态改变，先移除旧 Marker DOM
+        // 状态变动时先清空旧 DOM
         if (existing) {
             existing.marker.remove();
             STATE.markerMap.delete(st.id);
         }
 
+        // 6. 构建 DOM 节点
         const containerEl = document.createElement('div');
         containerEl.className = 'station-marker';
 
@@ -890,27 +917,6 @@ function renderMapMarkers() {
             }
             bindPopupEvents(containerEl, st, null);
         } else {
-            let nodeValue = '';
-            let rawVal = 0;
-            let hexColor = '#9ca3af';
-
-            if (STATE.urlParams.pol === 'aqi') {
-                rawVal = getStationCalculatedAqi(matchedRecord, STATE.activeRule);
-                if (rawVal === null) return;
-                nodeValue = rawVal;
-            } else {
-                rawVal = matchedRecord[STATE.urlParams.pol];
-                if (rawVal === null) return;
-                
-                if (STATE.urlParams.pol === 'co') {
-                    rawVal = rawVal / 1000; // 毫克换算
-                    nodeValue = rawVal.toFixed(1);
-                } else {
-                    nodeValue = Math.round(rawVal);
-                }
-            }
-            hexColor = getColorAndLabel(STATE.urlParams.pol, rawVal, STATE.activeRule).color;
-
             const node = document.createElement('div');
             node.className = 'station-node';
 
@@ -939,17 +945,15 @@ function renderMapMarkers() {
             
             node.style.backgroundColor = hexColor;
             node.style.color = getTextColorForBackground(hexColor);
-            
             node.innerText = nodeValue;
             containerEl.appendChild(node);
 
             if (!STATE.isHistory) {
-                const ageSeconds = currentSystemSec - matchedRecord.unixTime;
                 if (ageSeconds <= 3600) {
                     const canvas = document.createElement('canvas');
                     canvas.className = 'ring-canvas';
 
-                    // 【改进 1：DPR 高分屏设备像素比换算，消除 Canvas 锯齿】
+                    // 高分屏 DPR 物理像素缩放，解决 Canvas 抗锯齿
                     const dpr = window.devicePixelRatio || 1;
                     canvas.width = 32 * dpr; 
                     canvas.height = 32 * dpr;
@@ -963,10 +967,9 @@ function renderMapMarkers() {
                     canvas.style.pointerEvents = 'none';
 
                     const ctx = canvas.getContext('2d');
-                    ctx.scale(dpr, dpr); // 映射绘图上下文到高清分辨率坐标
+                    ctx.scale(dpr, dpr);
 
                     const ratio = 1 - (ageSeconds / 3600);
-
                     ctx.clearRect(0, 0, 32, 32);
                     
                     const RING_COLOR = '#202020';
@@ -1011,17 +1014,19 @@ function renderMapMarkers() {
             .setLngLat([st.lon, st.lat])
             .addTo(map);
 
-        // 保存复用映射
         STATE.markerMap.set(st.id, { marker, key: markerKey });
     });
 
-    // 【改进 2：按需清理移出视口或不需要显示的 Marker】
+    // 7. 清理移出视口或失效的 Marker
     for (const [id, item] of STATE.markerMap.entries()) {
         if (!activeStationIds.has(id)) {
             item.marker.remove();
             STATE.markerMap.delete(id);
         }
     }
+
+    // 8. 保持 STATE.markerInstances 数组同步（确保全局向下兼容）
+    STATE.markerInstances = Array.from(STATE.markerMap.values()).map(item => item.marker);
 }
 
 // 多指标聚合看板 Tooltip 引擎
