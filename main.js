@@ -261,7 +261,7 @@ async function applicationMain() {
         });
 
         map.on('moveend', pushStateToURL);
-        map.on('moveend', renderMapMarkers);
+        map.on('moveend', debouncedRenderMapMarkers);
         map.on('click', closeAllPopups);
 
         // 4. 驱动UI结构、绑定全局硬件设备中断事件
@@ -776,6 +776,14 @@ function getTextColorForBackground(colorStr) {
     return brightness > 170 ? '#727272' : '#ffffff';
 }
 
+let renderTimer = null;
+function debouncedRenderMapMarkers() {
+    if (renderTimer) clearTimeout(renderTimer);
+    renderTimer = setTimeout(() => {
+        renderMapMarkers(); // 停止拖拽或缩放 100ms 后才重建 DOM 标记
+    }, 100);
+}
+
 // 高动态位掩码过滤与 Canvas 站点标记控制系统
 function renderMapMarkers() {
     closeAllPopups();
@@ -783,11 +791,51 @@ function renderMapMarkers() {
     STATE.markerInstances.forEach(m => m.remove());
     STATE.markerInstances = [];
 
+    // 默认不裁剪（覆盖全球），只有在 bounds 校验 100% 有效时才开启视口过滤
+    let minLng = -180, maxLng = 180, minLat = -90, maxLat = 90;
+    let useCulling = false;
+
+    if (map && typeof map.getBounds === 'function') {
+        try {
+            const bounds = map.getBounds();
+            if (bounds) {
+                const sw = bounds.getSouthWest();
+                const ne = bounds.getNorthEast();
+
+                // 严密校验：确保坐标不是 NaN、undefined 且地图容器尺寸正常
+                if (sw && ne && typeof sw.lng === 'number' && typeof ne.lng === 'number' && !isNaN(sw.lng) && !isNaN(ne.lng)) {
+                    const minX = Math.min(sw.lng, ne.lng);
+                    const maxX = Math.max(sw.lng, ne.lng);
+                    const minY = Math.min(sw.lat, ne.lat);
+                    const maxY = Math.max(sw.lat, ne.lat);
+
+                    // 只有视口跨度大于 0（即地图已正常完成 DOM 布局渲染）时才启用视口裁剪
+                    if ((maxX - minX) > 0 && (maxY - minY) > 0) {
+                        const lngPad = (maxX - minX) * 0.3;
+                        const latPad = (maxY - minY) * 0.3;
+                        minLng = minX - lngPad;
+                        maxLng = maxX + lngPad;
+                        minLat = minY - latPad;
+                        maxLat = maxY + latPad;
+                        useCulling = true;
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn("视口边界计算跳过，降级为全量渲染:", e);
+        }
+    }
+
     const mask = STATE.urlParams.level;
     const currentSystemSec = Math.floor(Date.now() / 1000);
     const recordMap = STATE.hourlyCache;
 
     STATE.stations.forEach(st => {
+        // 只有在视口边界校验 100% 正常时才过滤屏外站点，避免误杀
+        if (useCulling) {
+            if (st.lon < minLng || st.lon > maxLng || st.lat < minLat || st.lat > maxLat) return;
+        }
+
         let visible = false;
         if (st.level === '国控' && mask[0] === '1') visible = true;
         if (st.level === '省控' && mask[1] === '1') visible = true;
