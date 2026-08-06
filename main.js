@@ -790,17 +790,9 @@ function getTextColorForBackground(colorStr) {
     return brightness > 170 ? '#727272' : '#ffffff';
 }
 
-// 高动态位掩码过滤与 Canvas 站点标记控制系统
+// 高动态位掩码过滤与 Canvas 站点标记控制系统（支持 O(1) DOM 复用与 DPR 抗锯齿）
 function renderMapMarkers() {
     closeAllPopups();
-
-    // 清空现有 Marker 实例
-    if (STATE.markerInstances && STATE.markerInstances.length > 0) {
-        for (let i = 0; i < STATE.markerInstances.length; i++) {
-            STATE.markerInstances[i].remove();
-        }
-        STATE.markerInstances = [];
-    }
 
     const mask = STATE.urlParams.level;
     const currentSystemSec = Math.floor(Date.now() / 1000);
@@ -828,6 +820,9 @@ function renderMapMarkers() {
         maxLat = rawMaxLat + latMargin;
     }
 
+    // 记录本次渲染视口内有效显示的站点 ID 集合
+    const activeStationIds = new Set();
+
     STATE.stations.forEach(st => {
         let visible = false;
         if (st.level === '国控' && mask[0] === '1') visible = true;
@@ -843,9 +838,41 @@ function renderMapMarkers() {
             }
         }
 
+        let matchedRecord = null;
+        if (mask !== '000') {
+            matchedRecord = recordMap.get(st.id);
+            if (!matchedRecord) return;
+
+            if (!STATE.isHistory) {
+                const ageSec = currentSystemSec - matchedRecord.unixTime;
+                if (ageSec > 7200) return; // 超过 2 小时无数据不渲染
+
+                if (STATE.urlParams.pol !== 'aqi') {
+                    if (matchedRecord[STATE.urlParams.pol] === null || matchedRecord[STATE.urlParams.pol] === undefined) return;
+                }
+            }
+        }
+
+        // 构造 Marker 唯一状态 Key（用于检测样式/数据是否发生变化）
+        const recordTime = matchedRecord ? matchedRecord.unixTime : 0;
+        const markerKey = `${st.id}_${mask}_${STATE.urlParams.pol}_${STATE.urlParams.aqi}_${STATE.isHistory}_${STATE.currentTimestamp}_${recordTime}`;
+
+        activeStationIds.add(st.id);
+
+        // 【内存复用核心】：若 Marker 已在地图上且状态未改变，直接保持原有 DOM，避免重建引发闪烁
+        const existing = STATE.markerMap.get(st.id);
+        if (existing && existing.key === markerKey) {
+            return;
+        }
+
+        // 若状态改变，先移除旧 Marker DOM
+        if (existing) {
+            existing.marker.remove();
+            STATE.markerMap.delete(st.id);
+        }
+
         const containerEl = document.createElement('div');
         containerEl.className = 'station-marker';
-        let matchedRecord = null;
 
         if (mask === '000') {
             const size = st.level === '国控' ? 14 : 12;
@@ -863,13 +890,6 @@ function renderMapMarkers() {
             }
             bindPopupEvents(containerEl, st, null);
         } else {
-            matchedRecord = recordMap.get(st.id);
-            if (!matchedRecord) return; 
-
-            if (!STATE.isHistory && STATE.urlParams.pol !== 'aqi') {
-                if (matchedRecord[STATE.urlParams.pol] === null || matchedRecord[STATE.urlParams.pol] === undefined) return;
-            }
-
             let nodeValue = '';
             let rawVal = 0;
             let hexColor = '#9ca3af';
@@ -894,14 +914,14 @@ function renderMapMarkers() {
             const node = document.createElement('div');
             node.className = 'station-node';
 
-            node.style.display = 'flex';           // 核心修正：从 inline-flex 改为 flex，消除绝对定位的水平挤压
-            node.style.alignItems = 'center';      // 文字垂直居中
-            node.style.justifyContent = 'center';    // 文字水平居中
-            node.style.position = 'relative';       // 为 Canvas 提供绝对定位父级锚点
+            node.style.display = 'flex';
+            node.style.alignItems = 'center';
+            node.style.justifyContent = 'center';
+            node.style.position = 'relative';
             node.style.boxSizing = 'border-box';
-            node.style.padding = '0';               // 强行清空任何可能继承自全局的内边距
-            node.style.margin = '0';                // 强行清空任何可能继承自全局的外边距
-            node.style.lineHeight = '1';            // 核心修正：强制行高为 1，消除数字因字体基线留白导致的视觉上偏
+            node.style.padding = '0';
+            node.style.margin = '0';
+            node.style.lineHeight = '1';
             node.style.textAlign = 'center';
             node.style.whiteSpace = 'nowrap';
             
@@ -928,15 +948,23 @@ function renderMapMarkers() {
                 if (ageSeconds <= 3600) {
                     const canvas = document.createElement('canvas');
                     canvas.className = 'ring-canvas';
-                    canvas.width = 32; canvas.height = 32;
+
+                    // 【改进 1：DPR 高分屏设备像素比换算，消除 Canvas 锯齿】
+                    const dpr = window.devicePixelRatio || 1;
+                    canvas.width = 32 * dpr; 
+                    canvas.height = 32 * dpr;
+                    canvas.style.width = '32px';
+                    canvas.style.height = '32px';
 
                     canvas.style.position = 'absolute';
                     canvas.style.top = '50%';
                     canvas.style.left = '50%';
-                    canvas.style.transform = 'translate(-50%, -50%)'; // 完美的几何质心对齐
-                    canvas.style.pointerEvents = 'none';              // 穿透鼠标事件，防止阻挡点击
+                    canvas.style.transform = 'translate(-50%, -50%)';
+                    canvas.style.pointerEvents = 'none';
 
                     const ctx = canvas.getContext('2d');
+                    ctx.scale(dpr, dpr); // 映射绘图上下文到高清分辨率坐标
+
                     const ratio = 1 - (ageSeconds / 3600);
 
                     ctx.clearRect(0, 0, 32, 32);
@@ -974,8 +1002,6 @@ function renderMapMarkers() {
                 } else if (ageSeconds > 3600 && ageSeconds <= 7200) {
                     const opacity = 1 - ((ageSeconds - 3600) / 3600);
                     containerEl.style.opacity = opacity;
-                } else {
-                    return;
                 }
             }
             bindPopupEvents(containerEl, st, matchedRecord);
@@ -984,8 +1010,18 @@ function renderMapMarkers() {
         const marker = new maplibregl.Marker({ element: containerEl, anchor: 'center' })
             .setLngLat([st.lon, st.lat])
             .addTo(map);
-        STATE.markerInstances.push(marker);
+
+        // 保存复用映射
+        STATE.markerMap.set(st.id, { marker, key: markerKey });
     });
+
+    // 【改进 2：按需清理移出视口或不需要显示的 Marker】
+    for (const [id, item] of STATE.markerMap.entries()) {
+        if (!activeStationIds.has(id)) {
+            item.marker.remove();
+            STATE.markerMap.delete(id);
+        }
+    }
 }
 
 // 多指标聚合看板 Tooltip 引擎
