@@ -785,16 +785,26 @@ function renderMapMarkers() {
     STATE.markerInstances.forEach(m => m.remove());
     STATE.markerInstances = [];
 
-    // 获取当前地图可视视口边界（扩展 50% 缓冲区，避免拖动边缘出现空白）
-    const bounds = map ? map.getBounds().pad(0.5) : null;
-
+    // 精确获取 MapLibre 当前视口边界，并手动计算外扩 30% 的缓冲区坐标
+    let minLng = -180, maxLng = 180, minLat = -90, maxLat = 90;
+    if (map) {
+        const bounds = map.getBounds();
+        const sw = bounds.getSouthWest();
+        const ne = bounds.getNorthEast();
+        const lngPad = (ne.lng - sw.lng) * 0.3;
+        const latPad = (ne.lat - sw.lat) * 0.3;
+        minLng = sw.lng - lngPad;
+        maxLng = ne.lng + lngPad;
+        minLat = sw.lat - latPad;
+        maxLat = ne.lat + latPad;
+    }
     const mask = STATE.urlParams.level;
     const currentSystemSec = Math.floor(Date.now() / 1000);
     const recordMap = STATE.hourlyCache;
 
     STATE.stations.forEach(st => {
-        // 视口裁剪：超出可视区域的站点跳过 DOM 创建
-        if (bounds && !bounds.contains([st.lon, st.lat])) return;
+        // 快速数值比对视口裁剪：超出外扩区域的站点直接跳过，零 DOM 消耗
+        if (st.lon < minLng || st.lon > maxLng || st.lat < minLat || st.lat > maxLat) return;
 
         let visible = false;
         if (st.level === '国控' && mask[0] === '1') visible = true;
