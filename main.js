@@ -262,13 +262,13 @@ async function applicationMain() {
 
         map.on('moveend', pushStateToURL);
 
-        // 记录上一次渲染时是否处于视口裁剪模式（> 6.0）
-        let lastWasCull = map.getZoom() > 6.0;
+        // 记录上一次渲染时是否处于视口裁剪模式（> 6.5）
+        let lastWasCull = map.getZoom() > 6.5;
         map.on('moveend', () => {
             pushStateToURL();
             const currentZoom = map.getZoom();
-            const isCull = currentZoom > 6.0;
-            // 仅在以下两种情况才触发 DOM 重画：1. 当前处于小范围 (Zoom > 6.0)，移动/缩放后视口边界变了，需要重新裁剪；2. 刚刚跨越了 6.0 的临界点（从全量切到裁剪，或从裁剪恢复全量）
+            const isCull = currentZoom > 6.5;
+            // 仅在以下两种情况才触发 DOM 重画：1. 当前处于小范围 (Zoom > 6.5)，移动/缩放后视口边界变了，需要重新裁剪；2. 刚刚跨越了 6.5 的临界点（从全量切到裁剪，或从裁剪恢复全量）
             if (isCull || isCull !== lastWasCull) {
                 renderMapMarkers();
                 lastWasCull = isCull;
@@ -806,9 +806,9 @@ function renderMapMarkers() {
     const currentSystemSec = Math.floor(Date.now() / 1000);
     const recordMap = STATE.hourlyCache;
 
-    // 获取当前 Zoom 及视口边界（仅在 Zoom > 6.0 时计算视口）
+    // 获取当前 Zoom 及视口边界（仅在 Zoom > 6.5 时计算视口）
     const currentZoom = map.getZoom();
-    const enableCulling = currentZoom > 6.0;
+    const enableCulling = currentZoom > 6.5;
     
     let minLng = 0, maxLng = 0, minLat = 0, maxLat = 0;
     if (enableCulling) {
