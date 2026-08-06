@@ -949,7 +949,7 @@ function renderMapMarkers() {
             containerEl.appendChild(node);
 
             if (!STATE.isHistory) {
-                if (ageSeconds <= 3600) {
+                if (ageSeconds < 3600) {
                     const canvas = document.createElement('canvas');
                     canvas.className = 'ring-canvas';
 
@@ -1002,9 +1002,9 @@ function renderMapMarkers() {
                     }
 
                     node.appendChild(canvas);
-                } else if (ageSeconds > 3600 && ageSeconds <= 10000) {
+                } else if (ageSeconds >= 3600 && ageSeconds < 7200) {
                     const opacity = 1 - ((ageSeconds - 3600) / 3600);
-                    containerEl.style.opacity = opacity;
+                    node.style.opacity = opacity.toFixed(2);
                 }
             }
             bindPopupEvents(containerEl, st, matchedRecord);
