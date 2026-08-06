@@ -805,11 +805,20 @@ function renderMapMarkers() {
     
     let minLng = 0, maxLng = 0, minLat = 0, maxLat = 0;
     if (enableCulling) {
-        const bounds = map.getBounds().pad(0.2);
-        minLng = bounds.getWest();
-        maxLng = bounds.getEast();
-        minLat = bounds.getSouth();
-        maxLat = bounds.getNorth();
+        const bounds = map.getBounds();
+        const rawMinLng = bounds.getWest();
+        const rawMaxLng = bounds.getEast();
+        const rawMinLat = bounds.getSouth();
+        const rawMaxLat = bounds.getNorth();
+
+        // 手动计算四周 20% (0.2) 的外扩余量
+        const lngMargin = (rawMaxLng - rawMinLng) * 0.2;
+        const latMargin = (rawMaxLat - rawMinLat) * 0.2;
+
+        minLng = rawMinLng - lngMargin;
+        maxLng = rawMaxLng + lngMargin;
+        minLat = rawMinLat - latMargin;
+        maxLat = rawMaxLat + latMargin;
     }
 
     STATE.stations.forEach(st => {
