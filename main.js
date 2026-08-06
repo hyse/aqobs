@@ -258,10 +258,7 @@ async function applicationMain() {
             });
         });
 
-        map.on('moveend', () => {
-            pushStateToURL();
-            renderMapMarkers(); // 拖动平移结束后，补充绘制新视口区域内的站点
-        });
+        map.on('moveend', pushStateToURL);
         map.on('zoomend', pushStateToURL);
 
         map.on('click', () => {
@@ -670,12 +667,20 @@ function stepTime(isForward) {
 
 // 全球全域硬件设备键盘事件映射机
 function setupShortcutEvents() {
-    document.addEventListener('gesturestart', (e) => e.preventDefault());
-    document.addEventListener('gesturechange', (e) => e.preventDefault());
-    document.addEventListener('gestureend', (e) => e.preventDefault());
+    // 1. 精准拦截 Chrome / Edge 触摸板双指捏合导致的“整页放大”（仅针对 ctrlKey 缩放，不影响普通滚轮平移）
     window.addEventListener('wheel', (e) => {
-        if (e.ctrlKey) e.preventDefault(); // 阻断 Chrome 触摸板 Pinch 触发的页面缩放
-    }, { passive: false });
+        if (e.ctrlKey) {
+            e.preventDefault(); // 封死网页放大，地图 Canvas 内部会自行接管地图级别的缩放
+        }
+    }, { passive: true });
+
+    // 2. 精准拦截 Safari (macOS / iOS) 的原生网页手势放大
+    ['gesturestart', 'gesturechange', 'gestureend'].forEach(type => {
+        document.addEventListener(type, (e) => {
+            e.preventDefault(); // 封死 Safari 网页手势缩放
+        });
+    });
+
     let keyTimers = {};
 
     window.addEventListener('keydown', (e) => {
@@ -785,27 +790,11 @@ function renderMapMarkers() {
     STATE.markerInstances.forEach(m => m.remove());
     STATE.markerInstances = [];
 
-    // 精确获取 MapLibre 当前视口边界，并手动计算外扩 30% 的缓冲区坐标
-    let minLng = -180, maxLng = 180, minLat = -90, maxLat = 90;
-    if (map) {
-        const bounds = map.getBounds();
-        const sw = bounds.getSouthWest();
-        const ne = bounds.getNorthEast();
-        const lngPad = (ne.lng - sw.lng) * 0.3;
-        const latPad = (ne.lat - sw.lat) * 0.3;
-        minLng = sw.lng - lngPad;
-        maxLng = ne.lng + lngPad;
-        minLat = sw.lat - latPad;
-        maxLat = ne.lat + latPad;
-    }
     const mask = STATE.urlParams.level;
     const currentSystemSec = Math.floor(Date.now() / 1000);
     const recordMap = STATE.hourlyCache;
 
     STATE.stations.forEach(st => {
-        // 快速数值比对视口裁剪：超出外扩区域的站点直接跳过，零 DOM 消耗
-        if (st.lon < minLng || st.lon > maxLng || st.lat < minLat || st.lat > maxLat) return;
-
         let visible = false;
         if (st.level === '国控' && mask[0] === '1') visible = true;
         if (st.level === '省控' && mask[1] === '1') visible = true;

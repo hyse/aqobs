@@ -8,13 +8,6 @@
     <meta name="keywords" content="空气质量地图,AQI,空气质量指数,PM2.5,PM10,O3,臭氧,空气质量,空气污染,实时监控,环境观测">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     
-    <script>
-        try {
-            Object.defineProperty(window, 'parent', { get: () => window, configurable: true });
-            Object.defineProperty(window, 'top', { get: () => window, configurable: true });
-        } catch (e) { console.warn("Security Bypass Override:", e); }
-    </script>
-    
     <link href="./lib/maplibre-gl.css" rel="stylesheet" />
     <script src="./lib/maplibre-gl.js"></script>
     <script src="./lib/getdata.js"></script>
@@ -30,9 +23,8 @@
             margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
             overscroll-behavior: none; /* 禁用拖拽露白 */
-            touch-action: none;        /* 禁用默认网页拖拽与双指缩放 */
         }
-        #map { position: absolute; top: 0; bottom: 0; width: 100%; height: 100%; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; height: 100%; touch-action: pan-x pan-y pinch-zoom; }
 
         #map, .maplibregl-canvas {
         outline: none !important;
