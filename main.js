@@ -207,9 +207,11 @@ async function applicationMain() {
             style: 'https://tiles.openfreemap.org/styles/liberty',
             center: [startLon, startLat],
             zoom: startZoom,
-            precision: 'lowp',
+            // precision: 'lowp',
             // cooperativeGestures 设为 false，滚轮直接触发缩放 (类似 Google Earth)，无需按住 Ctrl 键
             cooperativeGestures: false,
+            fadeDuration: 0,
+            trackResize: true,
             attributionControl: false,
             // antialias: false, // 关闭抗锯齿不能使画面流畅
             localIdeographFontFamily: 'sans-serif'
@@ -259,17 +261,8 @@ async function applicationMain() {
         });
 
         map.on('moveend', pushStateToURL);
-        map.on('zoomend', pushStateToURL);
-
-        map.on('click', () => {
-            closeAllPopups();
-        });
-
-        if (STATE.urlParams.scale === null) {
-            window.addEventListener('resize', () => {
-                map.setZoom(calculateZoomFor50Km(map.getCenter().lat));
-            });
-        }
+        map.on('moveend', debouncedRenderMapMarkers);
+        map.on('click', closeAllPopups);
 
         // 4. 驱动UI结构、绑定全局硬件设备中断事件
         buildTimeDropdownDOM();
@@ -783,6 +776,14 @@ function getTextColorForBackground(colorStr) {
     return brightness > 170 ? '#727272' : '#ffffff';
 }
 
+let renderTimer = null;
+function debouncedRenderMapMarkers() {
+    if (renderTimer) clearTimeout(renderTimer);
+    renderTimer = setTimeout(() => {
+        renderMapMarkers(); // 停止拖拽或缩放 100ms 后才重建 DOM 标记
+    }, 100);
+}
+
 // 高动态位掩码过滤与 Canvas 站点标记控制系统
 function renderMapMarkers() {
     closeAllPopups();
@@ -834,7 +835,7 @@ function renderMapMarkers() {
         if (useCulling) {
             if (st.lon < minLng || st.lon > maxLng || st.lat < minLat || st.lat > maxLat) return;
         }
-        
+
         let visible = false;
         if (st.level === '国控' && mask[0] === '1') visible = true;
         if (st.level === '省控' && mask[1] === '1') visible = true;
