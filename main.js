@@ -1002,7 +1002,7 @@ function renderMapMarkers() {
                     }
 
                     node.appendChild(canvas);
-                } else if (ageSeconds > 3600 && ageSeconds <= 7200) {
+                } else if (ageSeconds > 3600 && ageSeconds <= 10000) {
                     const opacity = 1 - ((ageSeconds - 3600) / 3600);
                     containerEl.style.opacity = opacity;
                 }
