@@ -261,14 +261,21 @@ async function applicationMain() {
         });
 
         map.on('moveend', pushStateToURL);
+
+        // 记录上一次渲染时是否处于视口裁剪模式（> 7.0）
+        let lastWasCull = map.getZoom() > 7.0;
         map.on('moveend', () => {
-            if (map.getZoom() > 7.5) {
+            pushStateToURL();
+            const currentZoom = map.getZoom();
+            const isCull = currentZoom > 7.0;
+            // 仅在以下两种情况才触发 DOM 重画：1. 当前处于小范围 (Zoom > 7.0)，移动/缩放后视口边界变了，需要重新裁剪；2. 刚刚跨越了 7.0 的临界点（从全量切到裁剪，或从裁剪恢复全量）
+            if (isCull || isCull !== lastWasCull) {
                 renderMapMarkers();
+                lastWasCull = isCull;
             }
         });
-        map.on('zoomend', () => {
-            renderMapMarkers();
-        });
+
+        map.on('click', closeAllPopups);
         map.on('click', closeAllPopups);
 
         // 4. 驱动UI结构、绑定全局硬件设备中断事件
@@ -799,9 +806,9 @@ function renderMapMarkers() {
     const currentSystemSec = Math.floor(Date.now() / 1000);
     const recordMap = STATE.hourlyCache;
 
-    // 获取当前 Zoom 及视口边界（仅在 Zoom > 7.5 时计算视口）
+    // 获取当前 Zoom 及视口边界（仅在 Zoom > 7.0 时计算视口）
     const currentZoom = map.getZoom();
-    const enableCulling = currentZoom > 7.5;
+    const enableCulling = currentZoom > 7.0;
     
     let minLng = 0, maxLng = 0, minLat = 0, maxLat = 0;
     if (enableCulling) {
