@@ -258,7 +258,10 @@ async function applicationMain() {
             });
         });
 
-        map.on('moveend', pushStateToURL);
+        map.on('moveend', () => {
+            pushStateToURL();
+            renderMapMarkers(); // 拖动平移结束后，补充绘制新视口区域内的站点
+        });
         map.on('zoomend', pushStateToURL);
 
         map.on('click', () => {
@@ -782,11 +785,17 @@ function renderMapMarkers() {
     STATE.markerInstances.forEach(m => m.remove());
     STATE.markerInstances = [];
 
+    // 获取当前地图可视视口边界（扩展 50% 缓冲区，避免拖动边缘出现空白）
+    const bounds = map ? map.getBounds().pad(0.5) : null;
+
     const mask = STATE.urlParams.level;
     const currentSystemSec = Math.floor(Date.now() / 1000);
     const recordMap = STATE.hourlyCache;
 
     STATE.stations.forEach(st => {
+        // 视口裁剪：超出可视区域的站点跳过 DOM 创建
+        if (bounds && !bounds.contains([st.lon, st.lat])) return;
+
         let visible = false;
         if (st.level === '国控' && mask[0] === '1') visible = true;
         if (st.level === '省控' && mask[1] === '1') visible = true;
