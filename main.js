@@ -936,13 +936,13 @@ function renderMapMarkers() {
                 node.style.height = '24px';
                 node.style.borderRadius = '50%';
                 node.style.fontSize = '13px';
-                node.style.opacity = '0.85';
+                node.style.opacity = '0.88';
             } else {
                 node.style.width = '24px';
                 node.style.height = '16px';
                 node.style.borderRadius = '4px';
                 node.style.fontSize = '12px';
-                node.style.opacity = '0.85';
+                node.style.opacity = '0.88';
             }
             
             node.style.backgroundColor = hexColor;
@@ -1005,7 +1005,7 @@ function renderMapMarkers() {
 
                     node.appendChild(canvas);
                 } else if (ageSeconds >= 3600 && ageSeconds < 7800) {
-                    const opacity = (1 - Math.pow((ageSeconds - 3600) * 6 / 7 / 3600, 3)) * 0.85;
+                    const opacity = (1 - Math.pow((ageSeconds - 3600) * 6 / 7 / 3600, 3)) * 0.88;
                     node.style.opacity = opacity.toFixed(2);
                 }
             }
