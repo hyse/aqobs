@@ -1005,7 +1005,7 @@ function renderMapMarkers() {
 
                     node.appendChild(canvas);
                 } else if (ageSeconds >= 3600 && ageSeconds < 7800) {
-                    const opacity = (1 - ((ageSeconds - 3600) * 6 / 7 / 3600) ^ 3) * 0.85;
+                    const opacity = (1 - Math.pow((ageSeconds - 3600) * 6 / 7 / 3600, 3)) * 0.85;
                     node.style.opacity = opacity.toFixed(2);
                 }
             }
