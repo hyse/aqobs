@@ -217,43 +217,6 @@ async function applicationMain() {
             localIdeographFontFamily: 'sans-serif'
         });
 
-        function reloadMapStyle() {
-            if (!map) return;
-            const center = map.getCenter();
-            const zoom = map.getZoom();
-            const bearing = map.getBearing();
-            const pitch = map.getPitch();
-
-            // 重新重置 Style 强制切断并重建瓦片 Fetch 管道
-            map.setStyle('https://tiles.openfreemap.org/styles/liberty');
-
-            map.once('style.load', () => {
-                map.jumpTo({ center, zoom, bearing, pitch });
-                if (typeof renderMapMarkers === 'function') {
-                    renderMapMarkers();
-                }
-            });
-        }
-
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible' && map) {
-                map.resize();
-
-                const canvas = map.getCanvas();
-                const gl = canvas ? (canvas.getContext('webgl2') || canvas.getContext('webgl')) : null;
-
-                if ((gl && gl.isContextLost()) || !map.areTilesLoaded()) {
-                    reloadMapStyle();
-                } else {
-                    map.triggerRepaint();
-                }
-            }
-        });
-
-        map.on('webglcontextrestored', () => {
-            reloadMapStyle();
-        });
-
         // 优雅过滤掉行政边界与干扰标签
         map.on('style.load', () => {
             const layers = map.getStyle().layers;
