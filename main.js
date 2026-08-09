@@ -853,7 +853,7 @@ function renderMapMarkers() {
 
             if (!STATE.isHistory) {
                 ageSeconds = currentSystemSec - matchedRecord.unixTime;
-                if (ageSeconds > 7200) return; // 超过 2 小时无数据不渲染
+                if (ageSeconds >= 8000) return; // 超过 2 小时无数据不渲染
 
                 if (STATE.urlParams.pol !== 'aqi') {
                     if (matchedRecord[STATE.urlParams.pol] === null || matchedRecord[STATE.urlParams.pol] === undefined) return;
@@ -1004,8 +1004,8 @@ function renderMapMarkers() {
                     }
 
                     node.appendChild(canvas);
-                } else if (ageSeconds >= 3600 && ageSeconds < 7800) {
-                    const opacity = (1 - Math.pow((ageSeconds - 3600) * 6 / 7 / 3600, 3)) * 0.88;
+                } else if (ageSeconds >= 3600 && ageSeconds < 8000) {
+                    const opacity = (1 - Math.pow((ageSeconds - 3600) / (8000 - 3600), 3)) * 0.88;
                     node.style.opacity = opacity.toFixed(2);
                 }
             }
