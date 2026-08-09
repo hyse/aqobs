@@ -217,20 +217,41 @@ async function applicationMain() {
             localIdeographFontFamily: 'sans-serif'
         });
 
-        // 1. 移动端监听页面可见性变化，从后台切回前台时唤醒地图重绘与尺寸校验
+        function reloadMapStyle() {
+            if (!map) return;
+            const center = map.getCenter();
+            const zoom = map.getZoom();
+            const bearing = map.getBearing();
+            const pitch = map.getPitch();
+
+            // 重新重置 Style 强制切断并重建瓦片 Fetch 管道
+            map.setStyle('https://tiles.openfreemap.org/styles/liberty');
+
+            map.once('style.load', () => {
+                map.jumpTo({ center, zoom, bearing, pitch });
+                if (typeof renderMapMarkers === 'function') {
+                    renderMapMarkers();
+                }
+            });
+        }
+
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible' && map) {
                 map.resize();
-                map.triggerRepaint();
-                renderMapMarkers();
+
+                const canvas = map.getCanvas();
+                const gl = canvas ? (canvas.getContext('webgl2') || canvas.getContext('webgl')) : null;
+
+                if ((gl && gl.isContextLost()) || !map.areTilesLoaded()) {
+                    reloadMapStyle();
+                } else {
+                    map.triggerRepaint();
+                }
             }
         });
 
-        // 2. 移动端监听 WebGL 上下文恢复事件，防止渲染上下文丢失后遗留空白画布
         map.on('webglcontextrestored', () => {
-            map.resize();
-            map.triggerRepaint();
-            renderMapMarkers();
+            reloadMapStyle();
         });
 
         // 优雅过滤掉行政边界与干扰标签
