@@ -217,6 +217,22 @@ async function applicationMain() {
             localIdeographFontFamily: 'sans-serif'
         });
 
+        // 1. 移动端监听页面可见性变化，从后台切回前台时唤醒地图重绘与尺寸校验
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && map) {
+                map.resize();
+                map.triggerRepaint();
+                renderMapMarkers();
+            }
+        });
+
+        // 2. 移动端监听 WebGL 上下文恢复事件，防止渲染上下文丢失后遗留空白画布
+        map.on('webglcontextrestored', () => {
+            map.resize();
+            map.triggerRepaint();
+            renderMapMarkers();
+        });
+
         // 优雅过滤掉行政边界与干扰标签
         map.on('style.load', () => {
             const layers = map.getStyle().layers;
