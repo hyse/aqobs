@@ -41,19 +41,23 @@
         }
 
         #map {
-            /* 1. 更深邃的夜空底色，拉大与星点的对比度 */
-            background-color: #050811;
-            /* 2. 提升透明度与点阵尺寸，使星点醒目清晰 */
+            background-color: #040711;
+            /* 包含：1颗极亮主星带光晕 + 2颗中星 + 6颗极暗背景微星 */
             background-image: 
-                radial-gradient(1.5px 1.5px at 10% 15%, #ffffff, transparent),
-                radial-gradient(2px 2px at 25% 65%, rgba(255, 255, 255, 0.95), transparent),
-                radial-gradient(1.5px 1.5px at 45% 20%, #ffffff, transparent),
-                radial-gradient(2.5px 2.5px at 65% 80%, rgba(255, 255, 255, 0.85), transparent),
-                radial-gradient(1.5px 1.5px at 75% 35%, #ffffff, transparent),
-                radial-gradient(2px 2px at 88% 70%, rgba(255, 255, 255, 0.95), transparent),
-                radial-gradient(1.5px 1.5px at 95% 10%, #ffffff, transparent);
-            /* 3. 星空平铺周期 */
-            background-size: 320px 320px;
+                /* --- 1. 一等亮星（带蓝白色光晕 halo） --- */
+                radial-gradient(1.8px 1.8px at 22% 35%, rgba(255, 255, 255, 1) 0%, rgba(200, 225, 255, 0.4) 60%, transparent 100%),
+                radial-gradient(8px 8px at 22% 35%, rgba(180, 215, 255, 0.15) 0%, transparent 100%),
+                /* --- 2. 二/三等中等星（暖色与白星） --- */
+                radial-gradient(1.2px 1.2px at 68% 75%, rgba(255, 240, 220, 0.8), transparent),
+                radial-gradient(1.1px 1.1px at 85% 18%, rgba(255, 255, 255, 0.7), transparent),
+                /* --- 3. 四/六等暗星（极微弱，透明度仅 0.1~0.25，营造夜空景深） --- */
+                radial-gradient(0.6px 0.6px at 10% 82%, rgba(255, 255, 255, 0.25), transparent),
+                radial-gradient(0.8px 0.8px at 40% 12%, rgba(255, 255, 255, 0.18), transparent),
+                radial-gradient(0.5px 0.5px at 53% 60%, rgba(255, 255, 255, 0.12), transparent),
+                radial-gradient(0.7px 0.7px at 78% 45%, rgba(255, 255, 255, 0.2), transparent),
+                radial-gradient(0.5px 0.5px at 92% 88%, rgba(255, 255, 255, 0.15), transparent),
+                radial-gradient(0.6px 0.6px at 35% 90%, rgba(255, 255, 255, 0.22), transparent);
+            background-size: 450px 450px;
         }
         
         /* 强力全屏阻断加载指示器 */
