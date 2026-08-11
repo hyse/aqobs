@@ -42,22 +42,27 @@
 
         #map {
             background-color: #040711;
-            /* 包含：1颗极亮主星带光晕 + 2颗中星 + 6颗极暗背景微星 */
             background-image: 
-                /* --- 1. 一等亮星（带蓝白色光晕 halo） --- */
-                radial-gradient(1.8px 1.8px at 22% 35%, rgba(255, 255, 255, 1) 0%, rgba(200, 225, 255, 0.4) 60%, transparent 100%),
-                radial-gradient(8px 8px at 22% 35%, rgba(180, 215, 255, 0.15) 0%, transparent 100%),
-                /* --- 2. 二/三等中等星（暖色与白星） --- */
-                radial-gradient(1.2px 1.2px at 68% 75%, rgba(255, 240, 220, 0.8), transparent),
-                radial-gradient(1.1px 1.1px at 85% 18%, rgba(255, 255, 255, 0.7), transparent),
-                /* --- 3. 四/六等暗星（极微弱，透明度仅 0.1~0.25，营造夜空景深） --- */
-                radial-gradient(0.6px 0.6px at 10% 82%, rgba(255, 255, 255, 0.25), transparent),
-                radial-gradient(0.8px 0.8px at 40% 12%, rgba(255, 255, 255, 0.18), transparent),
-                radial-gradient(0.5px 0.5px at 53% 60%, rgba(255, 255, 255, 0.12), transparent),
-                radial-gradient(0.7px 0.7px at 78% 45%, rgba(255, 255, 255, 0.2), transparent),
-                radial-gradient(0.5px 0.5px at 92% 88%, rgba(255, 255, 255, 0.15), transparent),
-                radial-gradient(0.6px 0.6px at 35% 90%, rgba(255, 255, 255, 0.22), transparent);
-            background-size: 450px 450px;
+                /* --- 1. 一等亮星（周期 1300px，全屏极少） --- */
+                radial-gradient(1.8px 1.8px at 18% 25%, rgba(255, 255, 255, 1) 0%, rgba(200, 225, 255, 0.4) 60%, transparent 100%),
+                radial-gradient(8px 8px at 18% 25%, rgba(180, 215, 255, 0.15) 0%, transparent 100%),
+                /* --- 2. 二/三等中等星（周期 950px） --- */
+                radial-gradient(1.2px 1.2px at 62% 70%, rgba(255, 240, 220, 0.8), transparent),
+                radial-gradient(1.1px 1.1px at 82% 15%, rgba(255, 255, 255, 0.7), transparent),
+                /* --- 3. 四/六等暗星阵列 A（周期 700px） --- */
+                radial-gradient(0.6px 0.6px at 12% 80%, rgba(255, 255, 255, 0.25), transparent),
+                radial-gradient(0.8px 0.8px at 45% 10%, rgba(255, 255, 255, 0.18), transparent),
+                radial-gradient(0.5px 0.5px at 78% 55%, rgba(255, 255, 255, 0.12), transparent),
+                /* --- 4. 四/六等暗星阵列 B（周期 1150px，错开位置） --- */
+                radial-gradient(0.7px 0.7px at 30% 45%, rgba(255, 255, 255, 0.2), transparent),
+                radial-gradient(0.5px 0.5px at 55% 85%, rgba(255, 255, 255, 0.15), transparent),
+                radial-gradient(0.6px 0.6px at 90% 30%, rgba(255, 255, 255, 0.22), transparent);
+            /* 关键：对应上面各个渐变层的尺寸，通过互质尺寸打乱周期，彻底打破方格感 */
+            background-size: 
+                1300px 1300px, 1300px 1300px,
+                950px 950px, 950px 950px,
+                700px 700px, 700px 700px, 700px 700px,
+                1150px 1150px, 1150px 1150px, 1150px 1150px;
         }
         
         /* 强力全屏阻断加载指示器 */
