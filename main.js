@@ -136,9 +136,82 @@ async function fetchIpLocation() {
     }
 }
 
+// 动态生成根据当前屏幕分辨率适配的全屏自然星空（彻底消除方格重复感）
+function generateRealisticStarfield() {
+    const canvas = document.createElement('canvas');
+    // 获取当前屏幕最大宽高，确保覆盖整屏且不需要平铺
+    const width = Math.max(window.screen.width || 1920, window.innerWidth);
+    const height = Math.max(window.screen.height || 1080, window.innerHeight);
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+
+    // 1. 填充深邃夜空底色
+    ctx.fillStyle = '#040711';
+    ctx.fillRect(0, 0, width, height);
+
+    // 恒星真实色温表：纯白、蓝白、暖白
+    const starColors = [
+        'rgba(255, 255, 255, ',
+        'rgba(255, 255, 255, ',
+        'rgba(215, 235, 255, ',
+        'rgba(255, 240, 220, '
+    ];
+
+    // 2. 根据全屏面积随机绘制约 220 颗星点
+    for (let i = 0; i < 220; i++) {
+        const x = Math.random() * width;
+        const y = Math.random() * height;
+        const rand = Math.random();
+
+        let radius, alpha, colorPrefix;
+        colorPrefix = starColors[Math.floor(Math.random() * starColors.length)];
+
+        // --- 1) 极少量的亮星（带柔和光晕 Halo） ---
+        if (rand > 0.99) {
+            radius = 2.0;
+            alpha = 0.95;
+
+            const haloGrad = ctx.createRadialGradient(x, y, 0, x, y, radius * 6);
+            haloGrad.addColorStop(0, colorPrefix + '0.5)');
+            haloGrad.addColorStop(0.3, colorPrefix + '0.12)');
+            haloGrad.addColorStop(1, 'transparent');
+            ctx.fillStyle = haloGrad;
+            ctx.beginPath();
+            ctx.arc(x, y, radius * 6, 0, Math.PI * 2);
+            ctx.fill();
+        } 
+        // --- 2) 少量中等清晰星点 ---
+        else if (rand > 0.91) {
+            radius = 1.1;
+            alpha = 0.65 + Math.random() * 0.2;
+        } 
+        // --- 3) 绝大多数暗微星（拉开深邃景深） ---
+        else {
+            radius = 0.5;
+            alpha = 0.08 + Math.random() * 0.22;
+        }
+
+        ctx.fillStyle = colorPrefix + alpha + ')';
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // 3. 将渲染好的 Canvas 导出为 DataURL 设为 #map 背景（关闭平铺，铺满全屏）
+    const mapEl = document.getElementById('map');
+    if (mapEl) {
+        mapEl.style.backgroundImage = `url(${canvas.toDataURL()})`;
+        mapEl.style.backgroundRepeat = 'no-repeat';
+        mapEl.style.backgroundPosition = 'center center';
+        mapEl.style.backgroundSize = 'cover';
+    }
+}
+
 // 全周期初始化驱动
 async function applicationMain() {
     try {
+        generateRealisticStarfield();
         parseURLQuery();
         
         document.getElementById('loader-text').innerText = "正在并行同步配置与静态站点资产...";
