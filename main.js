@@ -527,7 +527,7 @@ function syncUIStateAndURL() {
     if (!STATE.isHistory) {
         const d = new Date();
         timeBox.innerText = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-        timeBox.setAttribute('data-tooltip', `${d.getMonth() + 1}月${d.getDate()}日${d.getHours()}时`);
+        timeBox.setAttribute('data-tooltip', `${d.getDate()}日${d.getHours()}时`);
     } else {
         const d = new Date(STATE.currentTimestamp * 1000);
         timeBox.innerText = `${String(d.getHours()).padStart(2,'0')}:00`;
