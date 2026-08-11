@@ -11,7 +11,7 @@ const STATE = {
     markerMap: new Map(),   // 【新增：用于 O(1) 级站点 Marker 内存复用映射】
     hourlyCache: new Map(), // 新增：用于缓存当前整点从小端 CDN 拉回来的中括号时序记录
     playInterval: null,
-    urlParams: { lat: null, lon: null, scale: null, level: '111', pol: 'aqi', aqi: 'us' }
+    urlParams: { lat: null, lon: null, scale: null, proj: '2d', level: '111', pol: 'aqi', aqi: 'us' }
 };
 
 // 【修改】全局弹窗生命周期管理：记录当前被固定的站点 ID
@@ -43,6 +43,8 @@ function parseURLQuery() {
     STATE.urlParams.lat = params.get('lat') ? parseFloat(params.get('lat')) : null;
     STATE.urlParams.lon = params.get('lon') ? parseFloat(params.get('lon')) : null;
     STATE.urlParams.scale = params.get('scale') ? parseFloat(params.get('scale')) : null;
+    const rawProj = (params.get('proj') || '').toLowerCase();
+    STATE.urlParams.proj = (rawProj === '3d' || rawProj === 'globe') ? '3d' : '2d';
     STATE.urlParams.level = params.get('level') || '111';
     STATE.urlParams.pol = params.get('pol') || 'aqi';
     STATE.urlParams.aqi = params.get('aqi') || '';
@@ -53,7 +55,7 @@ function parseURLQuery() {
 function pushStateToURL() {
     const center = map.getCenter();
     const zoom = map.getZoom();
-    const newUrl = `${window.location.origin}${window.location.pathname}?lat=${center.lat.toFixed(6)}&lon=${center.lng.toFixed(6)}&scale=${zoom.toFixed(2)}&level=${STATE.urlParams.level}&pol=${STATE.urlParams.pol}&aqi=${STATE.urlParams.aqi}&past=${STATE.urlParams.past}`;
+    const newUrl = `${window.location.origin}${window.location.pathname}?lat=${center.lat.toFixed(6)}&lon=${center.lng.toFixed(6)}&scale=${zoom.toFixed(2)}&proj=${STATE.urlParams.proj}&level=${STATE.urlParams.level}&pol=${STATE.urlParams.pol}&aqi=${STATE.urlParams.aqi}&past=${STATE.urlParams.past}`;
     window.history.replaceState(null, '', newUrl);
 }
 
@@ -219,6 +221,11 @@ async function applicationMain() {
 
         // 优雅过滤掉行政边界与干扰标签
         map.on('style.load', () => {
+            // 设置 2D(墨卡托) 或 3D(地球) 投影
+            map.setProjection({
+                type: STATE.urlParams.proj === '3d' ? 'globe' : 'mercator'
+            });
+
             const layers = map.getStyle().layers;
 
             // 在循环外预编译正则表达式，避免重复创建
@@ -722,6 +729,14 @@ function setupShortcutEvents() {
             STATE.urlParams.aqi = STATE.aqiRules[(idx + 1) % STATE.aqiRules.length].code;
             STATE.activeRule = STATE.aqiRules.find(r => r.code === STATE.urlParams.aqi);
             syncUIStateAndURL(); renderMapMarkers();
+        }
+        if (k === 'P') {
+            e.preventDefault();
+            STATE.urlParams.proj = STATE.urlParams.proj === '3d' ? '2d' : '3d';
+            map.setProjection({
+                type: STATE.urlParams.proj === '3d' ? 'globe' : 'mercator'
+            });
+            pushStateToURL();
         }
         if (k === 'R') { e.preventDefault(); enterRealtimeView(); }
         if (k === 'T') { e.preventDefault(); triggerBtn.click(); }
