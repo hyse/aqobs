@@ -41,21 +41,19 @@
         }
 
         #map {
-            /* 1. 柔和深蓝夜空底色 */
-            background-color: #080c14;
-
-            /* 2. 利用 CSS 多重径向渐变纯代码生成自然分布的星点 */
+            /* 1. 更深邃的夜空底色，拉大与星点的对比度 */
+            background-color: #050811;
+            /* 2. 提升透明度与点阵尺寸，使星点醒目清晰 */
             background-image: 
-                radial-gradient(1px 1px at 12% 18%, rgba(255, 255, 255, 0.6), transparent),
-                radial-gradient(1.5px 1.5px at 28% 62%, rgba(255, 255, 255, 0.4), transparent),
-                radial-gradient(1px 1px at 42% 22%, rgba(255, 255, 255, 0.5), transparent),
-                radial-gradient(2px 2px at 65% 78%, rgba(255, 255, 255, 0.3), transparent),
-                radial-gradient(1px 1px at 78% 32%, rgba(255, 255, 255, 0.7), transparent),
-                radial-gradient(1.5px 1.5px at 85% 68%, rgba(255, 255, 255, 0.4), transparent),
-                radial-gradient(1px 1px at 93% 12%, rgba(255, 255, 255, 0.5), transparent);
-
-            /* 3. 让星点网格平铺重复，保持自然感 */
-            background-size: 360px 360px;
+                radial-gradient(1.5px 1.5px at 10% 15%, #ffffff, transparent),
+                radial-gradient(2px 2px at 25% 65%, rgba(255, 255, 255, 0.95), transparent),
+                radial-gradient(1.5px 1.5px at 45% 20%, #ffffff, transparent),
+                radial-gradient(2.5px 2.5px at 65% 80%, rgba(255, 255, 255, 0.85), transparent),
+                radial-gradient(1.5px 1.5px at 75% 35%, #ffffff, transparent),
+                radial-gradient(2px 2px at 88% 70%, rgba(255, 255, 255, 0.95), transparent),
+                radial-gradient(1.5px 1.5px at 95% 10%, #ffffff, transparent);
+            /* 3. 星空平铺周期 */
+            background-size: 320px 320px;
         }
         
         /* 强力全屏阻断加载指示器 */

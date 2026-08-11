@@ -59,6 +59,15 @@ function pushStateToURL() {
     window.history.replaceState(null, '', newUrl);
 }
 
+// 统一驱动 2D/3D 投影与光晕渲染
+function updateMapProjection() {
+    if (!map) return;
+    const is3D = STATE.urlParams.proj === '3d';
+    map.setProjection({
+        type: is3D ? 'globe' : 'mercator'
+    });
+}
+
 // 【新增】根据行政区划代码或省市名称在 STATE.regions 中快速查找对应经纬度坐标
 function findRegionCoords(code, name) {
     if (!STATE.regions || STATE.regions.length === 0) return null;
@@ -221,24 +230,7 @@ async function applicationMain() {
 
         // 优雅过滤掉行政边界与干扰标签
         map.on('style.load', () => {
-            const is3D = STATE.urlParams.proj === '3d';
-
-            // 设置 2D(墨卡托) 或 3D(地球) 投影
-            map.setProjection({
-                type: is3D ? 'globe' : 'mercator'
-            });
-
-            // 【新增】如果是 3D 则开启边缘大气层光晕，2D 则关闭
-            if (is3D) {
-                map.setFog({
-                    'range': [0.8, 8],
-                    'color': 'rgba(255, 255, 255, 0.25)', // 边缘光晕颜色
-                    'horizon-blend': 0.1,
-                    'space-color': '#080c14'             // 融合背景深色
-                });
-            } else {
-                map.setFog(null);
-            }
+            updateMapProjection();
 
             const layers = map.getStyle().layers;
 
@@ -747,23 +739,7 @@ function setupShortcutEvents() {
         if (k === 'P') {
             e.preventDefault();
             STATE.urlParams.proj = STATE.urlParams.proj === '3d' ? '2d' : '3d';
-            const is3D = STATE.urlParams.proj === '3d';
-
-            map.setProjection({
-                type: is3D ? 'globe' : 'mercator'
-            });
-
-            // 【新增】按 P 键切换时动态更新/清除光晕
-            if (is3D) {
-                map.setFog({
-                    'range': [0.8, 8],
-                    'color': 'rgba(255, 255, 255, 0.25)',
-                    'horizon-blend': 0.1,
-                    'space-color': '#080c14'
-                });
-            } else {
-                map.setFog(null);
-            }
+            updateMapProjection(); // 切换后再统一更新
             pushStateToURL();
         }
         if (k === 'R') { e.preventDefault(); enterRealtimeView(); }
