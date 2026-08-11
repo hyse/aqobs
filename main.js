@@ -66,6 +66,7 @@ function updateMapProjection() {
     map.setProjection({
         type: is3D ? 'globe' : 'mercator'
     });
+    map.triggerRepaint();
 }
 
 // 【新增】根据行政区划代码或省市名称在 STATE.regions 中快速查找对应经纬度坐标
@@ -226,6 +227,19 @@ async function applicationMain() {
             attributionControl: false,
             // antialias: false, // 关闭抗锯齿不能使画面流畅
             localIdeographFontFamily: 'sans-serif'
+        });
+
+        const canvas = map.getCanvas();
+        canvas.addEventListener('webglcontextlost', (e) => {
+            // 必须调用 preventDefault()，否则浏览器默认不会尝试自动恢复 WebGL 上下文
+            e.preventDefault();
+            console.warn('WebGL 上下文丢失，正在尝试释放内存...');
+        });
+        canvas.addEventListener('webglcontextrestored', () => {
+            console.log('WebGL 上下文已恢复，重新加载样式');
+            if (STATE.currentStyle) {
+                map.setStyle(STATE.currentStyle);
+            }
         });
 
         // 优雅过滤掉行政边界与干扰标签
