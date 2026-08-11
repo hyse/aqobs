@@ -527,11 +527,11 @@ function syncUIStateAndURL() {
     if (!STATE.isHistory) {
         const d = new Date();
         timeBox.innerText = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-        timeBox.setAttribute('data-tooltip', `${d.getDate()}日${d.getHours()}时`);
+        timeBox.setAttribute('data-tooltip', `${d.getMonth() + 1}月${d.getDate()}日${d.getHours()}时`);
     } else {
         const d = new Date(STATE.currentTimestamp * 1000);
         timeBox.innerText = `${String(d.getHours()).padStart(2,'0')}:00`;
-        timeBox.setAttribute('data-tooltip', `${d.getDate()}日${d.getHours()}时`);
+        timeBox.setAttribute('data-tooltip', `${d.getMonth() + 1}月${d.getDate()}日${d.getHours()}时`);
 
         // 刷新游标（直角梯形：下底正对当前时间刻度，尖角刚好触及最高刻度线顶端，斜腰夹角 60°）
         const wrapper = document.getElementById('timeline-axis-wrapper');
@@ -560,7 +560,7 @@ function syncUIStateAndURL() {
         cursor.style.left = `${pct}%`;
         cursor.style.transform = 'translateX(-100%)'; // 下底（右侧边）精确对齐当前时间刻度
         cursor.style.clipPath = `polygon(0 0, 100% 0, 100% 100%, 0 ${topBasePct}%)`;
-        cursor.title = `${d.getDate()}日${d.getHours()}时`;
+        cursor.title = `${d.getMonth() + 1}月${d.getDate()}日${d.getHours()}时`;
     }
 
     // 同步下拉框的高亮定位
