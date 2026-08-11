@@ -959,7 +959,7 @@ function renderMapMarkers() {
 
             if (!STATE.isHistory) {
                 ageSeconds = currentSystemSec - matchedRecord.unixTime;
-                if (ageSeconds >= 8000) return; // 超过 2 小时无数据不渲染
+                if (ageSeconds >= 8000) return; // 超过约 2 小时 13 分多一点无数据不渲染
 
                 if (STATE.urlParams.pol !== 'aqi') {
                     if (matchedRecord[STATE.urlParams.pol] === null || matchedRecord[STATE.urlParams.pol] === undefined) return;
