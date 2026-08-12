@@ -161,14 +161,14 @@
 
         /* 地图站点标记渲染形态 */
         .station-marker { display: flex; align-items: center; justify-content: center; cursor: pointer; }
-        /* 优化后的地图站点文字标签（将静态 CSS 样式集中于样式表，避免 JS 逐行 Setter） */
+        /* 优化后的地图站点文字标签 */
         .station-node {
             display: flex; align-items: center; justify-content: center;
-            position: relative; box-sizing: border-box; padding: 0; margin: 0;
-            line-height: 1; text-align: center; white-space: nowrap;
-            color: white; font-weight: 700; font-size: 13px; letter-spacing: -0.5px;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.3); user-select: none; 
-            transition: border-radius 0.15s ease; text-shadow: 0 0 1px rgba(0, 0, 0, 0.2);
+            color: white; font-weight: 700; font-size: 13px; letter-spacing: -0.5px; line-height: 1;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            position: relative; user-select: none; 
+            transition: border-radius 0.15s ease; /* 视图切换时形状平滑过渡 */
+            text-shadow: 0 0 1px rgba(0, 0, 0, 0.2);
         }
         .ring-canvas { position: absolute; top: -4px; left: -4px; pointer-events: none; }
         .empty-station { border-radius: 50%; background: transparent; display: flex; align-items: center; justify-content: center; box-sizing: border-box; }

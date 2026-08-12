@@ -898,73 +898,7 @@ function getTextColorForBackground(colorStr) {
     return brightness > 170 ? '#727272' : '#ffffff';
 }
 
-// 独立且极速的 Canvas 倒计时环增量更新/重绘函数（复用 Canvas DOM 及 2D 上下文，彻底消除显存爆破与 GC 压力）
-function updateCanvasRing(node, st, ageSeconds) {
-    let canvas = node.querySelector('.ring-canvas');
-
-    if (STATE.isHistory || ageSeconds >= 3600) {
-        if (canvas) canvas.style.display = 'none';
-        if (!STATE.isHistory && ageSeconds >= 3600 && ageSeconds < 8000) {
-            const opacity = (1 - Math.pow((ageSeconds - 3600) / (8000 - 3600), 3)) * 0.88;
-            node.style.opacity = opacity.toFixed(2);
-        }
-        return;
-    }
-
-    // ageSeconds < 3600: 绘制倒计时环（仅在首次生成，后续直接复用 canvas 节点与 context）
-    if (!canvas) {
-        canvas = document.createElement('canvas');
-        canvas.className = 'ring-canvas';
-        const dpr = window.devicePixelRatio || 1;
-        canvas.width = 32 * dpr; 
-        canvas.height = 32 * dpr;
-        canvas.style.width = '32px';
-        canvas.style.height = '32px';
-        canvas.style.position = 'absolute';
-        canvas.style.top = '50%';
-        canvas.style.left = '50%';
-        canvas.style.transform = 'translate(-50%, -50%)';
-        canvas.style.pointerEvents = 'none';
-        node.appendChild(canvas);
-    } else {
-        canvas.style.display = 'block';
-    }
-
-    const ctx = canvas.getContext('2d');
-    const dpr = window.devicePixelRatio || 1;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // 重置并设置 DPR 缩放，避免重复 scale 导致的几何变形
-    ctx.clearRect(0, 0, 32, 32);
-
-    const ratio = 1 - (ageSeconds / 3600);
-    const RING_COLOR = '#202020';
-    ctx.strokeStyle = RING_COLOR;
-
-    const cx = 16, cy = 16;
-    const startAngle = -Math.PI / 2;
-    const endAngle = (-Math.PI / 2) + (Math.PI * 2 * ratio);
-
-    if (st.level === '国控') {
-        ctx.lineWidth = 2.6;
-        ctx.beginPath();
-        ctx.arc(cx, cy, 14, startAngle, endAngle);
-        ctx.stroke();
-    } else if (st.level === '省控') {
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.arc(cx, cy, 14.3, startAngle, endAngle);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(cx, cy, 12, startAngle, endAngle);
-        ctx.stroke();
-    } else {
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.arc(cx, cy, 14, startAngle, endAngle);
-        ctx.stroke();
-    }
-}
-
-// 高动态位掩码过滤与 DOM 站点标记控制系统（原地增量更新 / Context 复用 / 零 Layout Thrashing 定稿版）
+// 高动态位掩码过滤与 Canvas 站点标记控制系统（DPR 高清抗锯齿 / 内存 DOM 复用 / 零闪烁定稿版）
 function renderMapMarkers() {
     closeAllPopups();
 
@@ -1014,7 +948,7 @@ function renderMapMarkers() {
             }
         }
 
-        // 3. 提取与校验数据
+        // 3. 提取与校验数据（提前至 DOM 复用拦截前，防止无效站点误占位）
         let matchedRecord = null;
         let nodeValue = '';
         let rawVal = 0;
@@ -1052,87 +986,32 @@ function renderMapMarkers() {
             hexColor = getColorAndLabel(STATE.urlParams.pol, rawVal, STATE.activeRule).color;
         }
 
-        // 4. 构造 Marker Key
+        // 4. 构造 Marker Key（含 ageBucket 分钟粒度更新，兼顾拖拽防闪烁与时间平滑演进）
         const ageBucket = (!STATE.isHistory && mask !== '000') ? Math.floor(ageSeconds / 60) : 0;
         const recordTime = matchedRecord ? matchedRecord.unixTime : 0;
-        const ruleCode = STATE.activeRule ? STATE.activeRule.code : 'default';
-        const markerKey = `${st.id}_${mask}_${STATE.urlParams.pol}_${STATE.urlParams.aqi}_${ruleCode}_${STATE.isHistory}_${STATE.currentTimestamp}_${recordTime}_${ageBucket}`;
+        const markerKey = `${st.id}_${mask}_${STATE.urlParams.pol}_${STATE.urlParams.aqi}_${STATE.activeRule}_${STATE.isHistory}_${STATE.currentTimestamp}_${recordTime}_${ageBucket}`;
 
         activeStationIds.add(st.id);
 
-        // 5. 内存 DOM 复用与原地 (In-Place) 增量更新拦截
+        // 5. 内存 DOM 复用拦截
         const existing = STATE.markerMap.get(st.id);
-
-        if (existing) {
-            if (existing.key === markerKey) {
-                return; // Key 完全相同，直接跳过所有 DOM/Canvas 操作
-            }
-
-            // Key 发生改变：直接更新现有 DOM 节点与 Canvas 实例，禁止销毁和重新实例化 Marker！
-            existing.key = markerKey;
-            const containerEl = existing.containerEl;
-
-            if (mask === '000') {
-                const size = st.level === '国控' ? 14 : 12;
-                containerEl.className = 'station-marker empty-station';
-                containerEl.style.width = `${size}px`;
-                containerEl.style.height = `${size}px`;
-                containerEl.style.borderColor = '#1f2937';
-                if (st.level === '国控') {
-                    containerEl.style.borderWidth = '3.3px'; containerEl.style.borderStyle = 'solid';
-                } else if (st.level === '省控') {
-                    containerEl.style.borderWidth = '4px'; containerEl.style.borderStyle = 'double';
-                } else {
-                    containerEl.style.borderWidth = '1.4px'; containerEl.style.borderStyle = 'solid';
-                }
-                containerEl.innerHTML = '';
-                bindPopupEvents(containerEl, st, null);
-            } else {
-                containerEl.className = 'station-marker';
-                containerEl.style.width = '';
-                containerEl.style.height = '';
-                containerEl.style.border = '';
-
-                let node = containerEl.querySelector('.station-node');
-                if (!node) {
-                    containerEl.innerHTML = '';
-                    node = document.createElement('div');
-                    node.className = 'station-node';
-                    containerEl.appendChild(node);
-                }
-
-                // 动态增量更新属性，消除 Layout Thrashing
-                node.style.backgroundColor = hexColor;
-                node.style.color = getTextColorForBackground(hexColor);
-                node.textContent = nodeValue; // 使用 textContent 替代 innerText，防止同步重排
-
-                if (!STATE.isHistory) {
-                    node.style.width = '24px';
-                    node.style.height = '24px';
-                    node.style.borderRadius = '50%';
-                    node.style.fontSize = '13px';
-                    node.style.opacity = '0.88';
-                } else {
-                    node.style.width = '24px';
-                    node.style.height = '16px';
-                    node.style.borderRadius = '4px';
-                    node.style.fontSize = '12px';
-                    node.style.opacity = '0.88';
-                }
-
-                updateCanvasRing(node, st, ageSeconds);
-                bindPopupEvents(containerEl, st, matchedRecord);
-            }
+        if (existing && existing.key === markerKey) {
             return;
         }
 
-        // 6. 首次进入视口，全新构建 Marker DOM 结构并缓存引用
+        // 状态变动时先清空旧 DOM
+        if (existing) {
+            existing.marker.remove();
+            STATE.markerMap.delete(st.id);
+        }
+
+        // 6. 构建 DOM 节点
         const containerEl = document.createElement('div');
         containerEl.className = 'station-marker';
 
         if (mask === '000') {
             const size = st.level === '国控' ? 14 : 12;
-            containerEl.className = 'station-marker empty-station';
+            containerEl.className = 'empty-station';
             containerEl.style.width = `${size}px`;
             containerEl.style.height = `${size}px`;
             containerEl.style.borderColor = '#1f2937';
@@ -1148,6 +1027,17 @@ function renderMapMarkers() {
         } else {
             const node = document.createElement('div');
             node.className = 'station-node';
+
+            node.style.display = 'flex';
+            node.style.alignItems = 'center';
+            node.style.justifyContent = 'center';
+            node.style.position = 'relative';
+            node.style.boxSizing = 'border-box';
+            node.style.padding = '0';
+            node.style.margin = '0';
+            node.style.lineHeight = '1';
+            node.style.textAlign = 'center';
+            node.style.whiteSpace = 'nowrap';
             
             if (!STATE.isHistory) {
                 node.style.width = '24px';
@@ -1165,10 +1055,68 @@ function renderMapMarkers() {
             
             node.style.backgroundColor = hexColor;
             node.style.color = getTextColorForBackground(hexColor);
-            node.textContent = nodeValue; // 使用 textContent 替代 innerText
+            node.innerText = nodeValue;
             containerEl.appendChild(node);
 
-            updateCanvasRing(node, st, ageSeconds);
+            if (!STATE.isHistory) {
+                if (ageSeconds < 3600) {
+                    const canvas = document.createElement('canvas');
+                    canvas.className = 'ring-canvas';
+
+                    // 高分屏 DPR 物理像素缩放，消除 Canvas 抗锯齿
+                    const dpr = window.devicePixelRatio || 1;
+                    canvas.width = 32 * dpr; 
+                    canvas.height = 32 * dpr;
+                    canvas.style.width = '32px';
+                    canvas.style.height = '32px';
+
+                    canvas.style.position = 'absolute';
+                    canvas.style.top = '50%';
+                    canvas.style.left = '50%';
+                    canvas.style.transform = 'translate(-50%, -50%)';
+                    canvas.style.pointerEvents = 'none';
+
+                    const ctx = canvas.getContext('2d');
+                    ctx.scale(dpr, dpr);
+
+                    const ratio = 1 - (ageSeconds / 3600);
+                    ctx.clearRect(0, 0, 32, 32);
+                    
+                    const RING_COLOR = '#202020';
+                    ctx.strokeStyle = RING_COLOR;
+
+                    const cx = 16, cy = 16;
+                    const startAngle = -Math.PI / 2;
+                    const endAngle = (-Math.PI / 2) + (Math.PI * 2 * ratio);
+
+                    if (st.level === '国控') {
+                        ctx.lineWidth = 2.6;
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, 14, startAngle, endAngle);
+                        ctx.stroke();
+                    } 
+                    else if (st.level === '省控') {
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, 14.3, startAngle, endAngle);
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, 12, startAngle, endAngle);
+                        ctx.stroke();
+                    } 
+                    else {
+                        ctx.lineWidth = 1.2;
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, 14, startAngle, endAngle);
+                        ctx.stroke();
+                    }
+
+                    node.appendChild(canvas);
+                } else if (ageSeconds >= 3600 && ageSeconds < 8000) {
+                    const opacity = (1 - Math.pow((ageSeconds - 3600) / (8000 - 3600), 3)) * 0.88;
+                    node.style.opacity = opacity.toFixed(2);
+                }
+            }
             bindPopupEvents(containerEl, st, matchedRecord);
         }
 
@@ -1176,10 +1124,10 @@ function renderMapMarkers() {
             .setLngLat([st.lon, st.lat])
             .addTo(map);
 
-        STATE.markerMap.set(st.id, { marker, containerEl, key: markerKey });
+        STATE.markerMap.set(st.id, { marker, key: markerKey });
     });
 
-    // 7. 按需移除已移出视口或隐藏的 Marker DOM
+    // 7. 按需移除已移出视口或不需要显示的 Marker DOM
     for (const [id, item] of STATE.markerMap.entries()) {
         if (!activeStationIds.has(id)) {
             item.marker.remove();
@@ -1187,7 +1135,7 @@ function renderMapMarkers() {
         }
     }
 
-    // 8. 同步 STATE.markerInstances 数组，维持全局兼容性
+    // 8. 同步 STATE.markerInstances 数组，确保全局兼容性
     STATE.markerInstances = Array.from(STATE.markerMap.values()).map(item => item.marker);
 }
 
