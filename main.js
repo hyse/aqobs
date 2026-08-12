@@ -304,8 +304,6 @@ async function applicationMain() {
             localIdeographFontFamily: 'sans-serif'
         });
 
-        setupGlobalEventDelegation();
-
         const canvas = map.getCanvas();
         canvas.addEventListener('webglcontextlost', (e) => {
             // 必须调用 preventDefault()，否则浏览器默认不会尝试自动恢复 WebGL 上下文
@@ -900,6 +898,73 @@ function getTextColorForBackground(colorStr) {
     return brightness > 170 ? '#727272' : '#ffffff';
 }
 
+// 独立且极速的 Canvas 倒计时环增量更新/重绘函数（复用 Canvas DOM 及 2D 上下文，彻底消除显存爆破与 GC 压力）
+function updateCanvasRing(node, st, ageSeconds) {
+    let canvas = node.querySelector('.ring-canvas');
+
+    if (STATE.isHistory || ageSeconds >= 3600) {
+        if (canvas) canvas.style.display = 'none';
+        if (!STATE.isHistory && ageSeconds >= 3600 && ageSeconds < 8000) {
+            const opacity = (1 - Math.pow((ageSeconds - 3600) / (8000 - 3600), 3)) * 0.88;
+            node.style.opacity = opacity.toFixed(2);
+        }
+        return;
+    }
+
+    // ageSeconds < 3600: 绘制倒计时环（仅在首次生成，后续直接复用 canvas 节点与 context）
+    if (!canvas) {
+        canvas = document.createElement('canvas');
+        canvas.className = 'ring-canvas';
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = 32 * dpr; 
+        canvas.height = 32 * dpr;
+        canvas.style.width = '32px';
+        canvas.style.height = '32px';
+        canvas.style.position = 'absolute';
+        canvas.style.top = '50%';
+        canvas.style.left = '50%';
+        canvas.style.transform = 'translate(-50%, -50%)';
+        canvas.style.pointerEvents = 'none';
+        node.appendChild(canvas);
+    } else {
+        canvas.style.display = 'block';
+    }
+
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // 重置并设置 DPR 缩放，避免重复 scale 导致的几何变形
+    ctx.clearRect(0, 0, 32, 32);
+
+    const ratio = 1 - (ageSeconds / 3600);
+    const RING_COLOR = '#202020';
+    ctx.strokeStyle = RING_COLOR;
+
+    const cx = 16, cy = 16;
+    const startAngle = -Math.PI / 2;
+    const endAngle = (-Math.PI / 2) + (Math.PI * 2 * ratio);
+
+    if (st.level === '国控') {
+        ctx.lineWidth = 2.6;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 14, startAngle, endAngle);
+        ctx.stroke();
+    } else if (st.level === '省控') {
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 14.3, startAngle, endAngle);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cx, cy, 12, startAngle, endAngle);
+        ctx.stroke();
+    } else {
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 14, startAngle, endAngle);
+        ctx.stroke();
+    }
+}
+
+// 高动态位掩码过滤与 DOM 站点标记控制系统（原地增量更新 / Context 复用 / 零 Layout Thrashing 定稿版）
 function renderMapMarkers() {
     closeAllPopups();
 
@@ -907,6 +972,7 @@ function renderMapMarkers() {
     const currentSystemSec = Math.floor(Date.now() / 1000);
     const recordMap = STATE.hourlyCache;
 
+    // 获取当前 Zoom 及视口边界（仅在 Zoom > 6.66 时计算视口）
     const currentZoom = map.getZoom();
     const enableCulling = currentZoom > 6.66;
     
@@ -918,6 +984,7 @@ function renderMapMarkers() {
         const rawMinLat = bounds.getSouth();
         const rawMaxLat = bounds.getNorth();
 
+        // 手动计算四周 30% 的外扩余量
         const lngMargin = (rawMaxLng - rawMinLng) * 0.3;
         const latMargin = (rawMaxLat - rawMinLat) * 0.3;
 
@@ -927,9 +994,11 @@ function renderMapMarkers() {
         maxLat = rawMaxLat + latMargin;
     }
 
+    // 记录本次渲染视口内真正有效显示的站点 ID 集合
     const activeStationIds = new Set();
 
     STATE.stations.forEach(st => {
+        // 1. 图层级别掩码过滤
         let visible = false;
         if (st.level === '国控' && mask[0] === '1') visible = true;
         if (st.level === '省控' && mask[1] === '1') visible = true;
@@ -938,12 +1007,14 @@ function renderMapMarkers() {
 
         if (!visible) return;
 
+        // 2. 视口裁剪
         if (enableCulling) {
             if (st.lon < minLng || st.lon > maxLng || st.lat < minLat || st.lat > maxLat) {
                 return;
             }
         }
 
+        // 3. 提取与校验数据
         let matchedRecord = null;
         let nodeValue = '';
         let rawVal = 0;
@@ -956,7 +1027,7 @@ function renderMapMarkers() {
 
             if (!STATE.isHistory) {
                 ageSeconds = currentSystemSec - matchedRecord.unixTime;
-                if (ageSeconds >= 8000) return;
+                if (ageSeconds >= 8000) return; // 超过约 2 小时 13 分多一点无数据不渲染
 
                 if (STATE.urlParams.pol !== 'aqi') {
                     if (matchedRecord[STATE.urlParams.pol] === null || matchedRecord[STATE.urlParams.pol] === undefined) return;
@@ -972,7 +1043,7 @@ function renderMapMarkers() {
                 if (rawVal === null || rawVal === undefined) return;
                 
                 if (STATE.urlParams.pol === 'co') {
-                    rawVal = rawVal / 1000;
+                    rawVal = rawVal / 1000; // 毫克换算
                     nodeValue = rawVal.toFixed(1);
                 } else {
                     nodeValue = Math.round(rawVal);
@@ -981,30 +1052,87 @@ function renderMapMarkers() {
             hexColor = getColorAndLabel(STATE.urlParams.pol, rawVal, STATE.activeRule).color;
         }
 
+        // 4. 构造 Marker Key
         const ageBucket = (!STATE.isHistory && mask !== '000') ? Math.floor(ageSeconds / 60) : 0;
         const recordTime = matchedRecord ? matchedRecord.unixTime : 0;
-        const markerKey = `${st.id}_${mask}_${STATE.urlParams.pol}_${STATE.urlParams.aqi}_${STATE.activeRule}_${STATE.isHistory}_${STATE.currentTimestamp}_${recordTime}_${ageBucket}`;
+        const ruleCode = STATE.activeRule ? STATE.activeRule.code : 'default';
+        const markerKey = `${st.id}_${mask}_${STATE.urlParams.pol}_${STATE.urlParams.aqi}_${ruleCode}_${STATE.isHistory}_${STATE.currentTimestamp}_${recordTime}_${ageBucket}`;
 
         activeStationIds.add(st.id);
 
+        // 5. 内存 DOM 复用与原地 (In-Place) 增量更新拦截
         const existing = STATE.markerMap.get(st.id);
-        if (existing && existing.key === markerKey) {
+
+        if (existing) {
+            if (existing.key === markerKey) {
+                return; // Key 完全相同，直接跳过所有 DOM/Canvas 操作
+            }
+
+            // Key 发生改变：直接更新现有 DOM 节点与 Canvas 实例，禁止销毁和重新实例化 Marker！
+            existing.key = markerKey;
+            const containerEl = existing.containerEl;
+
+            if (mask === '000') {
+                const size = st.level === '国控' ? 14 : 12;
+                containerEl.className = 'station-marker empty-station';
+                containerEl.style.width = `${size}px`;
+                containerEl.style.height = `${size}px`;
+                containerEl.style.borderColor = '#1f2937';
+                if (st.level === '国控') {
+                    containerEl.style.borderWidth = '3.3px'; containerEl.style.borderStyle = 'solid';
+                } else if (st.level === '省控') {
+                    containerEl.style.borderWidth = '4px'; containerEl.style.borderStyle = 'double';
+                } else {
+                    containerEl.style.borderWidth = '1.4px'; containerEl.style.borderStyle = 'solid';
+                }
+                containerEl.innerHTML = '';
+                bindPopupEvents(containerEl, st, null);
+            } else {
+                containerEl.className = 'station-marker';
+                containerEl.style.width = '';
+                containerEl.style.height = '';
+                containerEl.style.border = '';
+
+                let node = containerEl.querySelector('.station-node');
+                if (!node) {
+                    containerEl.innerHTML = '';
+                    node = document.createElement('div');
+                    node.className = 'station-node';
+                    containerEl.appendChild(node);
+                }
+
+                // 动态增量更新属性，消除 Layout Thrashing
+                node.style.backgroundColor = hexColor;
+                node.style.color = getTextColorForBackground(hexColor);
+                node.textContent = nodeValue; // 使用 textContent 替代 innerText，防止同步重排
+
+                if (!STATE.isHistory) {
+                    node.style.width = '24px';
+                    node.style.height = '24px';
+                    node.style.borderRadius = '50%';
+                    node.style.fontSize = '13px';
+                    node.style.opacity = '0.88';
+                } else {
+                    node.style.width = '24px';
+                    node.style.height = '16px';
+                    node.style.borderRadius = '4px';
+                    node.style.fontSize = '12px';
+                    node.style.opacity = '0.88';
+                }
+
+                updateCanvasRing(node, st, ageSeconds);
+                bindPopupEvents(containerEl, st, matchedRecord);
+            }
             return;
         }
 
-        if (existing) {
-            existing.marker.remove();
-            STATE.markerMap.delete(st.id);
-        }
-
+        // 6. 首次进入视口，全新构建 Marker DOM 结构并缓存引用
         const containerEl = document.createElement('div');
         containerEl.className = 'station-marker';
-        containerEl._st = st;
-        containerEl._record = matchedRecord;
 
         if (mask === '000') {
             const size = st.level === '国控' ? 14 : 12;
-            containerEl.className = 'empty-station station-marker';
+            containerEl.className = 'station-marker empty-station';
             containerEl.style.width = `${size}px`;
             containerEl.style.height = `${size}px`;
             containerEl.style.borderColor = '#1f2937';
@@ -1016,10 +1144,11 @@ function renderMapMarkers() {
             } else {
                 containerEl.style.borderWidth = '1.4px'; containerEl.style.borderStyle = 'solid';
             }
+            bindPopupEvents(containerEl, st, null);
         } else {
             const node = document.createElement('div');
             node.className = 'station-node';
-
+            
             if (!STATE.isHistory) {
                 node.style.width = '24px';
                 node.style.height = '24px';
@@ -1036,34 +1165,21 @@ function renderMapMarkers() {
             
             node.style.backgroundColor = hexColor;
             node.style.color = getTextColorForBackground(hexColor);
-            
-            // 使用 textContent 替代 innerText，避免强行触发同步重排 (Layout Thrashing)
-            node.textContent = nodeValue; 
+            node.textContent = nodeValue; // 使用 textContent 替代 innerText
             containerEl.appendChild(node);
 
-            if (!STATE.isHistory) {
-                if (ageSeconds < 3600) {
-                    // 使用纯 CSS conic-gradient 替代高消耗的 Canvas 2D 上下文创建
-                    const ratio = 1 - (ageSeconds / 3600);
-                    const deg = (ratio * 360).toFixed(1);
-                    const ring = document.createElement('div');
-                    ring.className = 'ring-conic';
-                    ring.style.setProperty('--ring-deg', `${deg}deg`);
-                    node.appendChild(ring);
-                } else if (ageSeconds >= 3600 && ageSeconds < 8000) {
-                    const opacity = (1 - Math.pow((ageSeconds - 3600) / (8000 - 3600), 3)) * 0.88;
-                    node.style.opacity = opacity.toFixed(2);
-                }
-            }
+            updateCanvasRing(node, st, ageSeconds);
+            bindPopupEvents(containerEl, st, matchedRecord);
         }
 
         const marker = new maplibregl.Marker({ element: containerEl, anchor: 'center' })
             .setLngLat([st.lon, st.lat])
             .addTo(map);
 
-        STATE.markerMap.set(st.id, { marker, key: markerKey });
+        STATE.markerMap.set(st.id, { marker, containerEl, key: markerKey });
     });
 
+    // 7. 按需移除已移出视口或隐藏的 Marker DOM
     for (const [id, item] of STATE.markerMap.entries()) {
         if (!activeStationIds.has(id)) {
             item.marker.remove();
@@ -1071,99 +1187,92 @@ function renderMapMarkers() {
         }
     }
 
+    // 8. 同步 STATE.markerInstances 数组，维持全局兼容性
     STATE.markerInstances = Array.from(STATE.markerMap.values()).map(item => item.marker);
 }
 
-// 构建 Tooltip HTML 内容结构
-function buildPopupDOM(st, rec) {
-    const div = document.createElement('div');
-    div.className = 'aqobs-popup-panel';
+// 多指标聚合看板 Tooltip 引擎
+function bindPopupEvents(el, station, record) {
+    // 动态更新节点挂载的数据源，确保 Hover 时读取最新整点值
+    el._st = station;
+    el._record = record;
 
-    if (!rec) {
-        div.innerHTML = `<div class="pop-row"><span class="pop-title">${st.name}</span><span class="pop-level">${st.level}</span></div>`;
-        return div;
-    }
+    // 若当前 DOM 已经挂载过事件，直接返回，不再重复绑定
+    if (el._hasPopupEvents) return;
+    el._hasPopupEvents = true;
 
-    const d = new Date(rec.unixTime * 1000);
-    const finalAqi = getStationCalculatedAqi(rec, STATE.activeRule);
-    const aqiBg = getColorAndLabel('aqi', finalAqi, STATE.activeRule).color;
-    const aqiTextColor = getTextColorForBackground(aqiBg); 
+    const buildContent = () => {
+        const st = el._st;
+        const rec = el._record;
+        const div = document.createElement('div');
+        div.className = 'aqobs-popup-panel';
 
-    const createBadge = (pType) => {
-        let v = rec[pType]; 
-        if (v === null || v === undefined) return `<span style="color:#9ca3af">--</span>`;
-        if (pType === 'co') {
-            v = (v / 1000).toFixed(1);
-        } else {
-            v = Math.round(v);
+        if (!rec) {
+            div.innerHTML = `<div class="pop-row"><span class="pop-title">${st.name}</span><span class="pop-level">${st.level}</span></div>`;
+            return div;
         }
-        const bg = getColorAndLabel(pType, v, STATE.activeRule).color;
-        const badgeTextColor = getTextColorForBackground(bg); 
-        return `<span class="pop-badge" style="background:${bg}; color:${badgeTextColor}">${v}</span>`;
+
+        const d = new Date(rec.unixTime * 1000);
+        const finalAqi = getStationCalculatedAqi(rec, STATE.activeRule);
+        const aqiBg = getColorAndLabel('aqi', finalAqi, STATE.activeRule).color;
+        const aqiTextColor = getTextColorForBackground(aqiBg); 
+
+        const createBadge = (pType) => {
+            let v = rec[pType]; 
+            if (v === null || v === undefined) return `<span style="color:#9ca3af">--</span>`;
+            if (pType === 'co') {
+                v = (v / 1000).toFixed(1);
+            } else {
+                v = Math.round(v);
+            }
+            const bg = getColorAndLabel(pType, v, STATE.activeRule).color;
+            const badgeTextColor = getTextColorForBackground(bg); 
+            return `<span class="pop-badge" style="background:${bg}; color:${badgeTextColor}">${v}</span>`;
+        };
+
+        div.innerHTML = `
+            <div class="pop-row"><span class="pop-title">${st.name}</span><span class="pop-level">${st.level}</span></div>
+            <div class="pop-row">
+                <span>AQI<sub>${STATE.urlParams.aqi.toUpperCase()}</sub>: <span class="pop-badge" style="background:${aqiBg}; color:${aqiTextColor}">${finalAqi}</span></span>
+                <span style="color:#4b5563; font-weight:500;">${d.getMonth()+1}月${d.getDate()}日 ${String(d.getHours()).padStart(2,'0')}:00</span>
+            </div>
+            <hr style="border:0; border-top:1px solid #e5e7eb; margin:5px 0;"/>
+            <div class="pop-row"><span>PM2.5: ${createBadge('pm25')}</span><span>PM10: ${createBadge('pm10')}</span></div>
+            <div class="pop-row"><span>O3: ${createBadge('o3')}</span><span>NO2: ${createBadge('no2')}</span></div>
+            <div class="pop-row"><span>SO2: ${createBadge('so2')}</span><span>CO: ${createBadge('co')}</span></div>
+        `;
+        return div;
     };
 
-    div.innerHTML = `
-        <div class="pop-row"><span class="pop-title">${st.name}</span><span class="pop-level">${st.level}</span></div>
-        <div class="pop-row">
-            <span>AQI<sub>${STATE.urlParams.aqi.toUpperCase()}</sub>: <span class="pop-badge" style="background:${aqiBg}; color:${aqiTextColor}">${finalAqi}</span></span>
-            <span style="color:#4b5563; font-weight:500;">${d.getMonth()+1}月${d.getDate()}日 ${String(d.getHours()).padStart(2,'0')}:00</span>
-        </div>
-        <hr style="border:0; border-top:1px solid #e5e7eb; margin:5px 0;"/>
-        <div class="pop-row"><span>PM2.5: ${createBadge('pm25')}</span><span>PM10: ${createBadge('pm10')}</span></div>
-        <div class="pop-row"><span>O3: ${createBadge('o3')}</span><span>NO2: ${createBadge('no2')}</span></div>
-        <div class="pop-row"><span>SO2: ${createBadge('so2')}</span><span>CO: ${createBadge('co')}</span></div>
-    `;
-    return div;
-}
+    const show = () => {
+        if (activePopup) activePopup.remove();
 
-// 统一展示 Popup 逻辑
-function showPopupForMarker(targetEl) {
-    if (activePopup) activePopup.remove();
+        activePopup = new maplibregl.Popup({ 
+            offset: 12, 
+            closeButton: false, 
+            closeOnClick: false 
+        })
+        .setLngLat([el._st.lon, el._st.lat])
+        .setDOMContent(buildContent())
+        .addTo(map);
+    };
 
-    activePopup = new maplibregl.Popup({ 
-        offset: 12, 
-        closeButton: false, 
-        closeOnClick: false 
-    })
-    .setLngLat([targetEl._st.lon, targetEl._st.lat])
-    .setDOMContent(buildPopupDOM(targetEl._st, targetEl._record))
-    .addTo(map);
-}
-
-// 【新增】全局单例事件委托监听器：将海量事件监听器数量缩减为 1 个
-function setupGlobalEventDelegation() {
-    const mapContainer = document.getElementById('map');
-    if (!mapContainer) return;
-
-    mapContainer.addEventListener('mouseover', (e) => {
+    el.addEventListener('mouseenter', () => {
         if (pinnedStationId !== null) return;
-        const target = e.target.closest('.station-marker');
-        if (target && target._st) {
-            showPopupForMarker(target);
-        }
+        show();
     });
 
-    mapContainer.addEventListener('mouseout', (e) => {
-        if (pinnedStationId !== null) return;
-        const target = e.target.closest('.station-marker');
-        if (target) {
-            const related = e.relatedTarget ? e.relatedTarget.closest('.station-marker') : null;
-            if (related !== target) {
-                closeAllPopups();
-            }
-        }
+    el.addEventListener('mouseleave', () => {
+        if (pinnedStationId === null) closeAllPopups();
     });
 
-    mapContainer.addEventListener('click', (e) => {
-        const target = e.target.closest('.station-marker');
-        if (target && target._st) {
-            e.stopPropagation();
-            if (pinnedStationId === target._st.id) {
-                closeAllPopups();
-            } else {
-                pinnedStationId = target._st.id;
-                showPopupForMarker(target);
-            }
+    el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (pinnedStationId === el._st.id) {
+            closeAllPopups();
+        } else {
+            pinnedStationId = el._st.id;
+            show();
         }
     });
 }
