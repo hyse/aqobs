@@ -905,7 +905,7 @@ function getTextColorForBackground(colorStr) {
 function renderMapMarkers() {
     closeAllPopups();
 
-    if (!map) return;
+    if (!map || !map.isStyleLoaded()) return; // 【新增】样式未就绪前跳过渲染，等待 style.load 事件触发
     if (!map.getSource('stations-source')) {
         initWebGLStationLayer();
     }
@@ -1134,7 +1134,7 @@ function generateStationIconCanvas(st, matchedRecord, ageSeconds, isHistory, mas
             ctx.arc(cx, cy, radius, 0, Math.PI * 2);
             ctx.stroke();
         }
-        return canvas;
+        return ctx.getImageData(0, 0, canvas.width, canvas.height);
     }
 
     // 2. 正常站点 (实时/历史模式)
@@ -1203,21 +1203,29 @@ function generateStationIconCanvas(st, matchedRecord, ageSeconds, isHistory, mas
         ctx.fillText(String(nodeValue), cx, cy);
     }
 
-    return canvas;
+    return ctx.getImageData(0, 0, canvas.width, canvas.height);
 }
 
-// 【新增】MapLibre 纹理注入与复用拦截器
+// 【修改后】MapLibre 纹理注入与复用拦截器（支持 ImageData 与样式加载防抖）
 function getOrCreateIconImage(iconKey, drawFn) {
-    if (!map) return iconKey;
+    if (!map || !map.isStyleLoaded()) return iconKey;
     if (!addedImages.has(iconKey)) {
         if (map.hasImage(iconKey)) {
             addedImages.add(iconKey);
             return iconKey;
         }
-        const canvas = drawFn();
+        const imageData = drawFn(); // 获取 ImageData 对象
         const dpr = window.devicePixelRatio || 1;
-        map.addImage(iconKey, canvas, { pixelRatio: dpr });
-        addedImages.add(iconKey);
+        
+        try {
+            map.addImage(iconKey, imageData, { pixelRatio: dpr });
+            addedImages.add(iconKey);
+        } catch (e) {
+            // 防御性拦截重复添加异常
+            if (!map.hasImage(iconKey)) {
+                console.warn(`[WebGL Image Error] ${iconKey}:`, e);
+            }
+        }
     }
     return iconKey;
 }
