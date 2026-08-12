@@ -30,8 +30,6 @@ const polList = ['co', 'so2', 'no2', 'o3', 'pm25', 'pm10', 'aqi'];
 
 let map;
 
-const addedImages = new Set();
-
 // 根据短边计算 50 km 自适应缩放比
 function calculateZoomFor50Km(lat) {
     const shortEdge = Math.min(window.innerWidth, window.innerHeight);
@@ -306,6 +304,8 @@ async function applicationMain() {
             localIdeographFontFamily: 'sans-serif'
         });
 
+        setupGlobalEventDelegation();
+
         const canvas = map.getCanvas();
         canvas.addEventListener('webglcontextlost', (e) => {
             // 必须调用 preventDefault()，否则浏览器默认不会尝试自动恢复 WebGL 上下文
@@ -322,7 +322,6 @@ async function applicationMain() {
         // 优雅过滤掉行政边界与干扰标签
         map.on('style.load', () => {
             updateMapProjection();
-            initWebGLStationLayer();
 
             const layers = map.getStyle().layers;
 
@@ -901,20 +900,13 @@ function getTextColorForBackground(colorStr) {
     return brightness > 170 ? '#727272' : '#ffffff';
 }
 
-// 重构后的 WebGL 站点渲染驱动引擎（方案 A + B 统一数据注入）
 function renderMapMarkers() {
     closeAllPopups();
-
-    if (!map || !map.isStyleLoaded()) return; // 【新增】样式未就绪前跳过渲染，等待 style.load 事件触发
-    if (!map.getSource('stations-source')) {
-        initWebGLStationLayer();
-    }
 
     const mask = STATE.urlParams.level;
     const currentSystemSec = Math.floor(Date.now() / 1000);
     const recordMap = STATE.hourlyCache;
 
-    // 依然保留经过测试验证的最优阈值 Zoom > 6.66 视口裁剪
     const currentZoom = map.getZoom();
     const enableCulling = currentZoom > 6.66;
     
@@ -935,10 +927,9 @@ function renderMapMarkers() {
         maxLat = rawMaxLat + latMargin;
     }
 
-    const features = [];
+    const activeStationIds = new Set();
 
     STATE.stations.forEach(st => {
-        // 1. 图层级别掩码过滤
         let visible = false;
         if (st.level === '国控' && mask[0] === '1') visible = true;
         if (st.level === '省控' && mask[1] === '1') visible = true;
@@ -947,20 +938,17 @@ function renderMapMarkers() {
 
         if (!visible) return;
 
-        // 2. 视口裁剪
         if (enableCulling) {
             if (st.lon < minLng || st.lon > maxLng || st.lat < minLat || st.lat > maxLat) {
                 return;
             }
         }
 
-        // 3. 数据校验与计算
         let matchedRecord = null;
         let nodeValue = '';
         let rawVal = 0;
         let hexColor = '#9ca3af';
         let ageSeconds = 0;
-        let opacity = 0.88;
 
         if (mask !== '000') {
             matchedRecord = recordMap.get(st.id);
@@ -968,7 +956,7 @@ function renderMapMarkers() {
 
             if (!STATE.isHistory) {
                 ageSeconds = currentSystemSec - matchedRecord.unixTime;
-                if (ageSeconds >= 8000) return; // 超过 8000 秒过滤
+                if (ageSeconds >= 8000) return;
 
                 if (STATE.urlParams.pol !== 'aqi') {
                     if (matchedRecord[STATE.urlParams.pol] === null || matchedRecord[STATE.urlParams.pol] === undefined) return;
@@ -991,72 +979,103 @@ function renderMapMarkers() {
                 }
             }
             hexColor = getColorAndLabel(STATE.urlParams.pol, rawVal, STATE.activeRule).color;
-
-            // 保持原有的精准衰减不透明度计算
-            if (!STATE.isHistory) {
-                if (ageSeconds >= 3600 && ageSeconds < 8000) {
-                    opacity = (1 - Math.pow((ageSeconds - 3600) / (8000 - 3600), 3)) * 0.88;
-                } else {
-                    opacity = 0.88;
-                }
-            } else {
-                opacity = 0.88;
-            }
-        } else {
-            opacity = 1.0;
         }
 
-        // 4. 构造纹理 Key & 动态生成 WebGL Image
-        let iconKey = '';
+        const ageBucket = (!STATE.isHistory && mask !== '000') ? Math.floor(ageSeconds / 60) : 0;
+        const recordTime = matchedRecord ? matchedRecord.unixTime : 0;
+        const markerKey = `${st.id}_${mask}_${STATE.urlParams.pol}_${STATE.urlParams.aqi}_${STATE.activeRule}_${STATE.isHistory}_${STATE.currentTimestamp}_${recordTime}_${ageBucket}`;
+
+        activeStationIds.add(st.id);
+
+        const existing = STATE.markerMap.get(st.id);
+        if (existing && existing.key === markerKey) {
+            return;
+        }
+
+        if (existing) {
+            existing.marker.remove();
+            STATE.markerMap.delete(st.id);
+        }
+
+        const containerEl = document.createElement('div');
+        containerEl.className = 'station-marker';
+        containerEl._st = st;
+        containerEl._record = matchedRecord;
+
         if (mask === '000') {
-            iconKey = `empty_${st.level}`;
-        } else if (STATE.isHistory) {
-            iconKey = `hist_${st.level}_${nodeValue}_${hexColor}`;
+            const size = st.level === '国控' ? 14 : 12;
+            containerEl.className = 'empty-station station-marker';
+            containerEl.style.width = `${size}px`;
+            containerEl.style.height = `${size}px`;
+            containerEl.style.borderColor = '#1f2937';
+            
+            if (st.level === '国控') {
+                containerEl.style.borderWidth = '3.3px'; containerEl.style.borderStyle = 'solid';
+            } else if (st.level === '省控') {
+                containerEl.style.borderWidth = '4px'; containerEl.style.borderStyle = 'double';
+            } else {
+                containerEl.style.borderWidth = '1.4px'; containerEl.style.borderStyle = 'solid';
+            }
         } else {
-            const ageMin = ageSeconds < 3600 ? Math.floor(ageSeconds / 60) : 60;
-            iconKey = `rt_${st.level}_${nodeValue}_${hexColor}_${ageMin}`;
+            const node = document.createElement('div');
+            node.className = 'station-node';
+
+            if (!STATE.isHistory) {
+                node.style.width = '24px';
+                node.style.height = '24px';
+                node.style.borderRadius = '50%';
+                node.style.fontSize = '13px';
+                node.style.opacity = '0.88';
+            } else {
+                node.style.width = '24px';
+                node.style.height = '16px';
+                node.style.borderRadius = '4px';
+                node.style.fontSize = '12px';
+                node.style.opacity = '0.88';
+            }
+            
+            node.style.backgroundColor = hexColor;
+            node.style.color = getTextColorForBackground(hexColor);
+            
+            // 使用 textContent 替代 innerText，避免强行触发同步重排 (Layout Thrashing)
+            node.textContent = nodeValue; 
+            containerEl.appendChild(node);
+
+            if (!STATE.isHistory) {
+                if (ageSeconds < 3600) {
+                    // 使用纯 CSS conic-gradient 替代高消耗的 Canvas 2D 上下文创建
+                    const ratio = 1 - (ageSeconds / 3600);
+                    const deg = (ratio * 360).toFixed(1);
+                    const ring = document.createElement('div');
+                    ring.className = 'ring-conic';
+                    ring.style.setProperty('--ring-deg', `${deg}deg`);
+                    node.appendChild(ring);
+                } else if (ageSeconds >= 3600 && ageSeconds < 8000) {
+                    const opacity = (1 - Math.pow((ageSeconds - 3600) / (8000 - 3600), 3)) * 0.88;
+                    node.style.opacity = opacity.toFixed(2);
+                }
+            }
         }
 
-        getOrCreateIconImage(iconKey, () => generateStationIconCanvas(st, matchedRecord, ageSeconds, STATE.isHistory, mask, nodeValue, hexColor));
+        const marker = new maplibregl.Marker({ element: containerEl, anchor: 'center' })
+            .setLngLat([st.lon, st.lat])
+            .addTo(map);
 
-        // 5. 压入 WebGL GeoJSON Feature
-        features.push({
-            type: 'Feature',
-            geometry: {
-                type: 'Point',
-                coordinates: [st.lon, st.lat]
-            },
-            properties: {
-                id: st.id,
-                iconKey: iconKey,
-                opacity: opacity,
-                station: JSON.stringify(st),
-                record: matchedRecord ? JSON.stringify(matchedRecord) : null
-            }
-        });
+        STATE.markerMap.set(st.id, { marker, key: markerKey });
     });
 
-    // 6. 一次性更新 GeoJSON 数据源，触发 WebGL GPU 级渲染
-    const source = map.getSource('stations-source');
-    if (source) {
-        source.setData({
-            type: 'FeatureCollection',
-            features: features
-        });
+    for (const [id, item] of STATE.markerMap.entries()) {
+        if (!activeStationIds.has(id)) {
+            item.marker.remove();
+            STATE.markerMap.delete(id);
+        }
     }
 
-    // 7. 清理残存的旧 DOM Marker（兼顾向下兼容）
-    if (STATE.markerMap.size > 0) {
-        for (const item of STATE.markerMap.values()) {
-            item.marker.remove();
-        }
-        STATE.markerMap.clear();
-        STATE.markerInstances = [];
-    }
+    STATE.markerInstances = Array.from(STATE.markerMap.values()).map(item => item.marker);
 }
 
-// 提取通用的弹窗 HTML 内容构建器
-function buildPopupContent(st, rec) {
+// 构建 Tooltip HTML 内容结构
+function buildPopupDOM(st, rec) {
     const div = document.createElement('div');
     div.className = 'aqobs-popup-panel';
 
@@ -1097,212 +1116,53 @@ function buildPopupContent(st, rec) {
     return div;
 }
 
-// 【新增】动态 Canvas 站点图标生成器（完全还原原 DOM 视觉：包含 3D/2D 形状、字体、倒计时环）
-function generateStationIconCanvas(st, matchedRecord, ageSeconds, isHistory, mask, nodeValue, hexColor) {
-    const canvas = document.createElement('canvas');
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = 32 * dpr;
-    canvas.height = 32 * dpr;
-    const ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, 32, 32);
+// 统一展示 Popup 逻辑
+function showPopupForMarker(targetEl) {
+    if (activePopup) activePopup.remove();
 
-    const cx = 16, cy = 16;
-
-    // 1. 空站点模式 (mask === '000')
-    if (mask === '000') {
-        const size = st.level === '国控' ? 14 : 12;
-        const radius = size / 2;
-        ctx.strokeStyle = '#1f2937';
-
-        if (st.level === '国控') {
-            ctx.lineWidth = 3.3;
-            ctx.beginPath();
-            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-            ctx.stroke();
-        } else if (st.level === '省控') {
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.arc(cx, cy, radius - 2, 0, Math.PI * 2);
-            ctx.stroke();
-        } else {
-            ctx.lineWidth = 1.4;
-            ctx.beginPath();
-            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-            ctx.stroke();
-        }
-        return ctx.getImageData(0, 0, canvas.width, canvas.height);
-    }
-
-    // 2. 正常站点 (实时/历史模式)
-    const textColor = getTextColorForBackground(hexColor);
-
-    if (!isHistory) {
-        // === 方案 B：实时视图 (24x24 圆形 + 倒计时环) ===
-        ctx.fillStyle = hexColor;
-        ctx.beginPath();
-        ctx.arc(cx, cy, 12, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = textColor;
-        ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(String(nodeValue), cx, cy);
-
-        // 绘制 1 小时以内的倒计时环
-        if (ageSeconds < 3600) {
-            const ratio = 1 - (ageSeconds / 3600);
-            const startAngle = -Math.PI / 2;
-            const endAngle = (-Math.PI / 2) + (Math.PI * 2 * ratio);
-            ctx.strokeStyle = '#202020';
-
-            if (st.level === '国控') {
-                ctx.lineWidth = 2.6;
-                ctx.beginPath();
-                ctx.arc(cx, cy, 14, startAngle, endAngle);
-                ctx.stroke();
-            } else if (st.level === '省控') {
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                ctx.arc(cx, cy, 14.3, startAngle, endAngle);
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.arc(cx, cy, 12, startAngle, endAngle);
-                ctx.stroke();
-            } else {
-                ctx.lineWidth = 1.2;
-                ctx.beginPath();
-                ctx.arc(cx, cy, 14, startAngle, endAngle);
-                ctx.stroke();
-            }
-        }
-    } else {
-        // === 方案 A：历史视图 (24x16 圆角矩形) ===
-        const w = 24, h = 16, r = 4;
-        const x = cx - w / 2;
-        const y = cy - h / 2;
-
-        ctx.fillStyle = hexColor;
-        ctx.beginPath();
-        ctx.moveTo(x + r, y);
-        ctx.arcTo(x + w, y, x + w, y + h, r);
-        ctx.arcTo(x + w, y + h, x, y + h, r);
-        ctx.arcTo(x, y + h, x, y, r);
-        ctx.arcTo(x, y, x + w, y, r);
-        ctx.closePath();
-        ctx.fill();
-
-        ctx.fillStyle = textColor;
-        ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(String(nodeValue), cx, cy);
-    }
-
-    return ctx.getImageData(0, 0, canvas.width, canvas.height);
+    activePopup = new maplibregl.Popup({ 
+        offset: 12, 
+        closeButton: false, 
+        closeOnClick: false 
+    })
+    .setLngLat([targetEl._st.lon, targetEl._st.lat])
+    .setDOMContent(buildPopupDOM(targetEl._st, targetEl._record))
+    .addTo(map);
 }
 
-// 【修改后】MapLibre 纹理注入与复用拦截器（支持 ImageData 与样式加载防抖）
-function getOrCreateIconImage(iconKey, drawFn) {
-    if (!map || !map.isStyleLoaded()) return iconKey;
-    if (!addedImages.has(iconKey)) {
-        if (map.hasImage(iconKey)) {
-            addedImages.add(iconKey);
-            return iconKey;
-        }
-        const imageData = drawFn(); // 获取 ImageData 对象
-        const dpr = window.devicePixelRatio || 1;
-        
-        try {
-            map.addImage(iconKey, imageData, { pixelRatio: dpr });
-            addedImages.add(iconKey);
-        } catch (e) {
-            // 防御性拦截重复添加异常
-            if (!map.hasImage(iconKey)) {
-                console.warn(`[WebGL Image Error] ${iconKey}:`, e);
-            }
-        }
-    }
-    return iconKey;
-}
+// 【新增】全局单例事件委托监听器：将海量事件监听器数量缩减为 1 个
+function setupGlobalEventDelegation() {
+    const mapContainer = document.getElementById('map');
+    if (!mapContainer) return;
 
-// 【新增】WebGL 图层与交互事件绑定
-function initWebGLStationLayer() {
-    if (!map) return;
-    
-    if (!map.getSource('stations-source')) {
-        map.addSource('stations-source', {
-            type: 'geojson',
-            data: { type: 'FeatureCollection', features: [] }
-        });
-    }
-
-    if (!map.getLayer('stations-webgl-layer')) {
-        map.addLayer({
-            id: 'stations-webgl-layer',
-            type: 'symbol',
-            source: 'stations-source',
-            layout: {
-                'icon-image': ['get', 'iconKey'],
-                'icon-allow-overlap': true,
-                'icon-ignore-placement': true,
-                'icon-anchor': 'center'
-            },
-            paint: {
-                // 继承精准的不透明度渐变计算公式
-                'icon-opacity': ['coalesce', ['get', 'opacity'], 0.88]
-            }
-        });
-
-        setupWebGLPopupEvents();
-    }
-}
-
-// 【新增】WebGL 鼠标悬浮与点击固定弹窗逻辑
-function setupWebGLPopupEvents() {
-    const showPopupForFeature = (feature) => {
-        const st = JSON.parse(feature.properties.station);
-        const rec = feature.properties.record ? JSON.parse(feature.properties.record) : null;
-        
-        if (activePopup) activePopup.remove();
-
-        activePopup = new maplibregl.Popup({ 
-            offset: 12, 
-            closeButton: false, 
-            closeOnClick: false 
-        })
-        .setLngLat([st.lon, st.lat])
-        .setDOMContent(buildPopupContent(st, rec))
-        .addTo(map);
-    };
-
-    map.on('mouseenter', 'stations-webgl-layer', (e) => {
+    mapContainer.addEventListener('mouseover', (e) => {
         if (pinnedStationId !== null) return;
-        map.getCanvas().style.cursor = 'pointer';
-        if (e.features && e.features.length > 0) {
-            showPopupForFeature(e.features[0]);
+        const target = e.target.closest('.station-marker');
+        if (target && target._st) {
+            showPopupForMarker(target);
         }
     });
 
-    map.on('mouseleave', 'stations-webgl-layer', () => {
-        map.getCanvas().style.cursor = '';
-        if (pinnedStationId === null) closeAllPopups();
+    mapContainer.addEventListener('mouseout', (e) => {
+        if (pinnedStationId !== null) return;
+        const target = e.target.closest('.station-marker');
+        if (target) {
+            const related = e.relatedTarget ? e.relatedTarget.closest('.station-marker') : null;
+            if (related !== target) {
+                closeAllPopups();
+            }
+        }
     });
 
-    map.on('click', 'stations-webgl-layer', (e) => {
-        e.stopPropagation();
-        if (e.features && e.features.length > 0) {
-            const feature = e.features[0];
-            const st = JSON.parse(feature.properties.station);
-            if (pinnedStationId === st.id) {
+    mapContainer.addEventListener('click', (e) => {
+        const target = e.target.closest('.station-marker');
+        if (target && target._st) {
+            e.stopPropagation();
+            if (pinnedStationId === target._st.id) {
                 closeAllPopups();
             } else {
-                pinnedStationId = st.id;
-                showPopupForFeature(feature);
+                pinnedStationId = target._st.id;
+                showPopupForMarker(target);
             }
         }
     });
