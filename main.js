@@ -96,9 +96,10 @@ function findRegionCoords(code, name) {
     return null;
 }
 
-// 高可用 IP 定位驱动机（三重 HTTPS/CORS 并行容错机制 - 统一单行语法）
+// 高可用 IP 定位驱动机（三重 HTTPS/CORS 并行容错 - 劣源 500ms 避让机制）
 async function fetchIpLocation() {
-    const fetchWithTimeout = async (url, parseFn, timeout = 2000) => {
+    const fetchWithTimeout = async (url, parseFn, timeout = 2000, delay = 0) => {
+        if (delay > 0) await new Promise(r => setTimeout(r, delay));
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeout);
         try {
@@ -116,7 +117,7 @@ async function fetchIpLocation() {
     };
 
     try {
-        // 使用 Promise.any 并发发起 3 个通道请求，谁最快用谁
+        // 使用 Promise.any 并发发起，ipinfo 延时 500ms 发起以优先保证高精度源抢答
         return await Promise.any([
             fetchWithTimeout(
                 'https://api.bigdatacloud.net/data/reverse-geocode-client',
@@ -128,7 +129,9 @@ async function fetchIpLocation() {
             ),
             fetchWithTimeout(
                 'https://ipinfo.io/json',
-                d => (d && d.loc) ? { lat: parseFloat(d.loc.split(',')[0]), lon: parseFloat(d.loc.split(',')[1]) } : null
+                d => (d && d.loc) ? { lat: parseFloat(d.loc.split(',')[0]), lon: parseFloat(d.loc.split(',')[1]) } : null,
+                2000,
+                500 // 延迟 500ms 发起请求
             )
         ]);
     } catch (e) {
