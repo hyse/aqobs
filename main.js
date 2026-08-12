@@ -30,6 +30,8 @@ const polList = ['co', 'so2', 'no2', 'o3', 'pm25', 'pm10', 'aqi'];
 
 let map;
 
+const addedImages = new Set();
+
 // 根据短边计算 50 km 自适应缩放比
 function calculateZoomFor50Km(lat) {
     const shortEdge = Math.min(window.innerWidth, window.innerHeight);
@@ -320,6 +322,7 @@ async function applicationMain() {
         // 优雅过滤掉行政边界与干扰标签
         map.on('style.load', () => {
             updateMapProjection();
+            initWebGLStationLayer();
 
             const layers = map.getStyle().layers;
 
@@ -898,15 +901,20 @@ function getTextColorForBackground(colorStr) {
     return brightness > 170 ? '#727272' : '#ffffff';
 }
 
-// 高动态位掩码过滤与 Canvas 站点标记控制系统（DPR 高清抗锯齿 / 内存 DOM 复用 / 零闪烁定稿版）
+// 重构后的 WebGL 站点渲染驱动引擎（方案 A + B 统一数据注入）
 function renderMapMarkers() {
     closeAllPopups();
+
+    if (!map) return;
+    if (!map.getSource('stations-source')) {
+        initWebGLStationLayer();
+    }
 
     const mask = STATE.urlParams.level;
     const currentSystemSec = Math.floor(Date.now() / 1000);
     const recordMap = STATE.hourlyCache;
 
-    // 获取当前 Zoom 及视口边界（仅在 Zoom > 6.66 时计算视口）
+    // 依然保留经过测试验证的最优阈值 Zoom > 6.66 视口裁剪
     const currentZoom = map.getZoom();
     const enableCulling = currentZoom > 6.66;
     
@@ -918,7 +926,6 @@ function renderMapMarkers() {
         const rawMinLat = bounds.getSouth();
         const rawMaxLat = bounds.getNorth();
 
-        // 手动计算四周 30% 的外扩余量
         const lngMargin = (rawMaxLng - rawMinLng) * 0.3;
         const latMargin = (rawMaxLat - rawMinLat) * 0.3;
 
@@ -928,8 +935,7 @@ function renderMapMarkers() {
         maxLat = rawMaxLat + latMargin;
     }
 
-    // 记录本次渲染视口内真正有效显示的站点 ID 集合
-    const activeStationIds = new Set();
+    const features = [];
 
     STATE.stations.forEach(st => {
         // 1. 图层级别掩码过滤
@@ -948,12 +954,13 @@ function renderMapMarkers() {
             }
         }
 
-        // 3. 提取与校验数据（提前至 DOM 复用拦截前，防止无效站点误占位）
+        // 3. 数据校验与计算
         let matchedRecord = null;
         let nodeValue = '';
         let rawVal = 0;
         let hexColor = '#9ca3af';
         let ageSeconds = 0;
+        let opacity = 0.88;
 
         if (mask !== '000') {
             matchedRecord = recordMap.get(st.id);
@@ -961,7 +968,7 @@ function renderMapMarkers() {
 
             if (!STATE.isHistory) {
                 ageSeconds = currentSystemSec - matchedRecord.unixTime;
-                if (ageSeconds >= 8000) return; // 超过约 2 小时 13 分多一点无数据不渲染
+                if (ageSeconds >= 8000) return; // 超过 8000 秒过滤
 
                 if (STATE.urlParams.pol !== 'aqi') {
                     if (matchedRecord[STATE.urlParams.pol] === null || matchedRecord[STATE.urlParams.pol] === undefined) return;
@@ -977,222 +984,282 @@ function renderMapMarkers() {
                 if (rawVal === null || rawVal === undefined) return;
                 
                 if (STATE.urlParams.pol === 'co') {
-                    rawVal = rawVal / 1000; // 毫克换算
+                    rawVal = rawVal / 1000;
                     nodeValue = rawVal.toFixed(1);
                 } else {
                     nodeValue = Math.round(rawVal);
                 }
             }
             hexColor = getColorAndLabel(STATE.urlParams.pol, rawVal, STATE.activeRule).color;
-        }
 
-        // 4. 构造 Marker Key（含 ageBucket 分钟粒度更新，兼顾拖拽防闪烁与时间平滑演进）
-        const ageBucket = (!STATE.isHistory && mask !== '000') ? Math.floor(ageSeconds / 60) : 0;
-        const recordTime = matchedRecord ? matchedRecord.unixTime : 0;
-        const markerKey = `${st.id}_${mask}_${STATE.urlParams.pol}_${STATE.urlParams.aqi}_${STATE.activeRule}_${STATE.isHistory}_${STATE.currentTimestamp}_${recordTime}_${ageBucket}`;
-
-        activeStationIds.add(st.id);
-
-        // 5. 内存 DOM 复用拦截
-        const existing = STATE.markerMap.get(st.id);
-        if (existing && existing.key === markerKey) {
-            return;
-        }
-
-        // 状态变动时先清空旧 DOM
-        if (existing) {
-            existing.marker.remove();
-            STATE.markerMap.delete(st.id);
-        }
-
-        // 6. 构建 DOM 节点
-        const containerEl = document.createElement('div');
-        containerEl.className = 'station-marker';
-
-        if (mask === '000') {
-            const size = st.level === '国控' ? 14 : 12;
-            containerEl.className = 'empty-station';
-            containerEl.style.width = `${size}px`;
-            containerEl.style.height = `${size}px`;
-            containerEl.style.borderColor = '#1f2937';
-            
-            if (st.level === '国控') {
-                containerEl.style.borderWidth = '3.3px'; containerEl.style.borderStyle = 'solid';
-            } else if (st.level === '省控') {
-                containerEl.style.borderWidth = '4px'; containerEl.style.borderStyle = 'double';
-            } else {
-                containerEl.style.borderWidth = '1.4px'; containerEl.style.borderStyle = 'solid';
-            }
-            bindPopupEvents(containerEl, st, null);
-        } else {
-            const node = document.createElement('div');
-            node.className = 'station-node';
-
-            node.style.display = 'flex';
-            node.style.alignItems = 'center';
-            node.style.justifyContent = 'center';
-            node.style.position = 'relative';
-            node.style.boxSizing = 'border-box';
-            node.style.padding = '0';
-            node.style.margin = '0';
-            node.style.lineHeight = '1';
-            node.style.textAlign = 'center';
-            node.style.whiteSpace = 'nowrap';
-            
+            // 保持原有的精准衰减不透明度计算
             if (!STATE.isHistory) {
-                node.style.width = '24px';
-                node.style.height = '24px';
-                node.style.borderRadius = '50%';
-                node.style.fontSize = '13px';
-                node.style.opacity = '0.88';
-            } else {
-                node.style.width = '24px';
-                node.style.height = '16px';
-                node.style.borderRadius = '4px';
-                node.style.fontSize = '12px';
-                node.style.opacity = '0.88';
-            }
-            
-            node.style.backgroundColor = hexColor;
-            node.style.color = getTextColorForBackground(hexColor);
-            node.innerText = nodeValue;
-            containerEl.appendChild(node);
-
-            if (!STATE.isHistory) {
-                if (ageSeconds < 3600) {
-                    const canvas = document.createElement('canvas');
-                    canvas.className = 'ring-canvas';
-
-                    // 高分屏 DPR 物理像素缩放，消除 Canvas 抗锯齿
-                    const dpr = window.devicePixelRatio || 1;
-                    canvas.width = 32 * dpr; 
-                    canvas.height = 32 * dpr;
-                    canvas.style.width = '32px';
-                    canvas.style.height = '32px';
-
-                    canvas.style.position = 'absolute';
-                    canvas.style.top = '50%';
-                    canvas.style.left = '50%';
-                    canvas.style.transform = 'translate(-50%, -50%)';
-                    canvas.style.pointerEvents = 'none';
-
-                    const ctx = canvas.getContext('2d');
-                    ctx.scale(dpr, dpr);
-
-                    const ratio = 1 - (ageSeconds / 3600);
-                    ctx.clearRect(0, 0, 32, 32);
-                    
-                    const RING_COLOR = '#202020';
-                    ctx.strokeStyle = RING_COLOR;
-
-                    const cx = 16, cy = 16;
-                    const startAngle = -Math.PI / 2;
-                    const endAngle = (-Math.PI / 2) + (Math.PI * 2 * ratio);
-
-                    if (st.level === '国控') {
-                        ctx.lineWidth = 2.6;
-                        ctx.beginPath();
-                        ctx.arc(cx, cy, 14, startAngle, endAngle);
-                        ctx.stroke();
-                    } 
-                    else if (st.level === '省控') {
-                        ctx.lineWidth = 1;
-                        ctx.beginPath();
-                        ctx.arc(cx, cy, 14.3, startAngle, endAngle);
-                        ctx.stroke();
-                        ctx.beginPath();
-                        ctx.arc(cx, cy, 12, startAngle, endAngle);
-                        ctx.stroke();
-                    } 
-                    else {
-                        ctx.lineWidth = 1.2;
-                        ctx.beginPath();
-                        ctx.arc(cx, cy, 14, startAngle, endAngle);
-                        ctx.stroke();
-                    }
-
-                    node.appendChild(canvas);
-                } else if (ageSeconds >= 3600 && ageSeconds < 8000) {
-                    const opacity = (1 - Math.pow((ageSeconds - 3600) / (8000 - 3600), 3)) * 0.88;
-                    node.style.opacity = opacity.toFixed(2);
+                if (ageSeconds >= 3600 && ageSeconds < 8000) {
+                    opacity = (1 - Math.pow((ageSeconds - 3600) / (8000 - 3600), 3)) * 0.88;
+                } else {
+                    opacity = 0.88;
                 }
+            } else {
+                opacity = 0.88;
             }
-            bindPopupEvents(containerEl, st, matchedRecord);
+        } else {
+            opacity = 1.0;
         }
 
-        const marker = new maplibregl.Marker({ element: containerEl, anchor: 'center' })
-            .setLngLat([st.lon, st.lat])
-            .addTo(map);
+        // 4. 构造纹理 Key & 动态生成 WebGL Image
+        let iconKey = '';
+        if (mask === '000') {
+            iconKey = `empty_${st.level}`;
+        } else if (STATE.isHistory) {
+            iconKey = `hist_${st.level}_${nodeValue}_${hexColor}`;
+        } else {
+            const ageMin = ageSeconds < 3600 ? Math.floor(ageSeconds / 60) : 60;
+            iconKey = `rt_${st.level}_${nodeValue}_${hexColor}_${ageMin}`;
+        }
 
-        STATE.markerMap.set(st.id, { marker, key: markerKey });
+        getOrCreateIconImage(iconKey, () => generateStationIconCanvas(st, matchedRecord, ageSeconds, STATE.isHistory, mask, nodeValue, hexColor));
+
+        // 5. 压入 WebGL GeoJSON Feature
+        features.push({
+            type: 'Feature',
+            geometry: {
+                type: 'Point',
+                coordinates: [st.lon, st.lat]
+            },
+            properties: {
+                id: st.id,
+                iconKey: iconKey,
+                opacity: opacity,
+                station: JSON.stringify(st),
+                record: matchedRecord ? JSON.stringify(matchedRecord) : null
+            }
+        });
     });
 
-    // 7. 按需移除已移出视口或不需要显示的 Marker DOM
-    for (const [id, item] of STATE.markerMap.entries()) {
-        if (!activeStationIds.has(id)) {
-            item.marker.remove();
-            STATE.markerMap.delete(id);
-        }
+    // 6. 一次性更新 GeoJSON 数据源，触发 WebGL GPU 级渲染
+    const source = map.getSource('stations-source');
+    if (source) {
+        source.setData({
+            type: 'FeatureCollection',
+            features: features
+        });
     }
 
-    // 8. 同步 STATE.markerInstances 数组，确保全局兼容性
-    STATE.markerInstances = Array.from(STATE.markerMap.values()).map(item => item.marker);
+    // 7. 清理残存的旧 DOM Marker（兼顾向下兼容）
+    if (STATE.markerMap.size > 0) {
+        for (const item of STATE.markerMap.values()) {
+            item.marker.remove();
+        }
+        STATE.markerMap.clear();
+        STATE.markerInstances = [];
+    }
 }
 
-// 多指标聚合看板 Tooltip 引擎
-function bindPopupEvents(el, station, record) {
-    // 动态更新节点挂载的数据源，确保 Hover 时读取最新整点值
-    el._st = station;
-    el._record = record;
+// 提取通用的弹窗 HTML 内容构建器
+function buildPopupContent(st, rec) {
+    const div = document.createElement('div');
+    div.className = 'aqobs-popup-panel';
 
-    // 若当前 DOM 已经挂载过事件，直接返回，不再重复绑定
-    if (el._hasPopupEvents) return;
-    el._hasPopupEvents = true;
-
-    const buildContent = () => {
-        const st = el._st;
-        const rec = el._record;
-        const div = document.createElement('div');
-        div.className = 'aqobs-popup-panel';
-
-        if (!rec) {
-            div.innerHTML = `<div class="pop-row"><span class="pop-title">${st.name}</span><span class="pop-level">${st.level}</span></div>`;
-            return div;
-        }
-
-        const d = new Date(rec.unixTime * 1000);
-        const finalAqi = getStationCalculatedAqi(rec, STATE.activeRule);
-        const aqiBg = getColorAndLabel('aqi', finalAqi, STATE.activeRule).color;
-        const aqiTextColor = getTextColorForBackground(aqiBg); 
-
-        const createBadge = (pType) => {
-            let v = rec[pType]; 
-            if (v === null || v === undefined) return `<span style="color:#9ca3af">--</span>`;
-            if (pType === 'co') {
-                v = (v / 1000).toFixed(1);
-            } else {
-                v = Math.round(v);
-            }
-            const bg = getColorAndLabel(pType, v, STATE.activeRule).color;
-            const badgeTextColor = getTextColorForBackground(bg); 
-            return `<span class="pop-badge" style="background:${bg}; color:${badgeTextColor}">${v}</span>`;
-        };
-
-        div.innerHTML = `
-            <div class="pop-row"><span class="pop-title">${st.name}</span><span class="pop-level">${st.level}</span></div>
-            <div class="pop-row">
-                <span>AQI<sub>${STATE.urlParams.aqi.toUpperCase()}</sub>: <span class="pop-badge" style="background:${aqiBg}; color:${aqiTextColor}">${finalAqi}</span></span>
-                <span style="color:#4b5563; font-weight:500;">${d.getMonth()+1}月${d.getDate()}日 ${String(d.getHours()).padStart(2,'0')}:00</span>
-            </div>
-            <hr style="border:0; border-top:1px solid #e5e7eb; margin:5px 0;"/>
-            <div class="pop-row"><span>PM2.5: ${createBadge('pm25')}</span><span>PM10: ${createBadge('pm10')}</span></div>
-            <div class="pop-row"><span>O3: ${createBadge('o3')}</span><span>NO2: ${createBadge('no2')}</span></div>
-            <div class="pop-row"><span>SO2: ${createBadge('so2')}</span><span>CO: ${createBadge('co')}</span></div>
-        `;
+    if (!rec) {
+        div.innerHTML = `<div class="pop-row"><span class="pop-title">${st.name}</span><span class="pop-level">${st.level}</span></div>`;
         return div;
+    }
+
+    const d = new Date(rec.unixTime * 1000);
+    const finalAqi = getStationCalculatedAqi(rec, STATE.activeRule);
+    const aqiBg = getColorAndLabel('aqi', finalAqi, STATE.activeRule).color;
+    const aqiTextColor = getTextColorForBackground(aqiBg); 
+
+    const createBadge = (pType) => {
+        let v = rec[pType]; 
+        if (v === null || v === undefined) return `<span style="color:#9ca3af">--</span>`;
+        if (pType === 'co') {
+            v = (v / 1000).toFixed(1);
+        } else {
+            v = Math.round(v);
+        }
+        const bg = getColorAndLabel(pType, v, STATE.activeRule).color;
+        const badgeTextColor = getTextColorForBackground(bg); 
+        return `<span class="pop-badge" style="background:${bg}; color:${badgeTextColor}">${v}</span>`;
     };
 
-    const show = () => {
+    div.innerHTML = `
+        <div class="pop-row"><span class="pop-title">${st.name}</span><span class="pop-level">${st.level}</span></div>
+        <div class="pop-row">
+            <span>AQI<sub>${STATE.urlParams.aqi.toUpperCase()}</sub>: <span class="pop-badge" style="background:${aqiBg}; color:${aqiTextColor}">${finalAqi}</span></span>
+            <span style="color:#4b5563; font-weight:500;">${d.getMonth()+1}月${d.getDate()}日 ${String(d.getHours()).padStart(2,'0')}:00</span>
+        </div>
+        <hr style="border:0; border-top:1px solid #e5e7eb; margin:5px 0;"/>
+        <div class="pop-row"><span>PM2.5: ${createBadge('pm25')}</span><span>PM10: ${createBadge('pm10')}</span></div>
+        <div class="pop-row"><span>O3: ${createBadge('o3')}</span><span>NO2: ${createBadge('no2')}</span></div>
+        <div class="pop-row"><span>SO2: ${createBadge('so2')}</span><span>CO: ${createBadge('co')}</span></div>
+    `;
+    return div;
+}
+
+// 【新增】动态 Canvas 站点图标生成器（完全还原原 DOM 视觉：包含 3D/2D 形状、字体、倒计时环）
+function generateStationIconCanvas(st, matchedRecord, ageSeconds, isHistory, mask, nodeValue, hexColor) {
+    const canvas = document.createElement('canvas');
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = 32 * dpr;
+    canvas.height = 32 * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, 32, 32);
+
+    const cx = 16, cy = 16;
+
+    // 1. 空站点模式 (mask === '000')
+    if (mask === '000') {
+        const size = st.level === '国控' ? 14 : 12;
+        const radius = size / 2;
+        ctx.strokeStyle = '#1f2937';
+
+        if (st.level === '国控') {
+            ctx.lineWidth = 3.3;
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            ctx.stroke();
+        } else if (st.level === '省控') {
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius - 2, 0, Math.PI * 2);
+            ctx.stroke();
+        } else {
+            ctx.lineWidth = 1.4;
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        return canvas;
+    }
+
+    // 2. 正常站点 (实时/历史模式)
+    const textColor = getTextColorForBackground(hexColor);
+
+    if (!isHistory) {
+        // === 方案 B：实时视图 (24x24 圆形 + 倒计时环) ===
+        ctx.fillStyle = hexColor;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 12, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = textColor;
+        ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(nodeValue), cx, cy);
+
+        // 绘制 1 小时以内的倒计时环
+        if (ageSeconds < 3600) {
+            const ratio = 1 - (ageSeconds / 3600);
+            const startAngle = -Math.PI / 2;
+            const endAngle = (-Math.PI / 2) + (Math.PI * 2 * ratio);
+            ctx.strokeStyle = '#202020';
+
+            if (st.level === '国控') {
+                ctx.lineWidth = 2.6;
+                ctx.beginPath();
+                ctx.arc(cx, cy, 14, startAngle, endAngle);
+                ctx.stroke();
+            } else if (st.level === '省控') {
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(cx, cy, 14.3, startAngle, endAngle);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(cx, cy, 12, startAngle, endAngle);
+                ctx.stroke();
+            } else {
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.arc(cx, cy, 14, startAngle, endAngle);
+                ctx.stroke();
+            }
+        }
+    } else {
+        // === 方案 A：历史视图 (24x16 圆角矩形) ===
+        const w = 24, h = 16, r = 4;
+        const x = cx - w / 2;
+        const y = cy - h / 2;
+
+        ctx.fillStyle = hexColor;
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = textColor;
+        ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(nodeValue), cx, cy);
+    }
+
+    return canvas;
+}
+
+// 【新增】MapLibre 纹理注入与复用拦截器
+function getOrCreateIconImage(iconKey, drawFn) {
+    if (!map) return iconKey;
+    if (!addedImages.has(iconKey)) {
+        if (map.hasImage(iconKey)) {
+            addedImages.add(iconKey);
+            return iconKey;
+        }
+        const canvas = drawFn();
+        const dpr = window.devicePixelRatio || 1;
+        map.addImage(iconKey, canvas, { pixelRatio: dpr });
+        addedImages.add(iconKey);
+    }
+    return iconKey;
+}
+
+// 【新增】WebGL 图层与交互事件绑定
+function initWebGLStationLayer() {
+    if (!map) return;
+    
+    if (!map.getSource('stations-source')) {
+        map.addSource('stations-source', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+        });
+    }
+
+    if (!map.getLayer('stations-webgl-layer')) {
+        map.addLayer({
+            id: 'stations-webgl-layer',
+            type: 'symbol',
+            source: 'stations-source',
+            layout: {
+                'icon-image': ['get', 'iconKey'],
+                'icon-allow-overlap': true,
+                'icon-ignore-placement': true,
+                'icon-anchor': 'center'
+            },
+            paint: {
+                // 继承精准的不透明度渐变计算公式
+                'icon-opacity': ['coalesce', ['get', 'opacity'], 0.88]
+            }
+        });
+
+        setupWebGLPopupEvents();
+    }
+}
+
+// 【新增】WebGL 鼠标悬浮与点击固定弹窗逻辑
+function setupWebGLPopupEvents() {
+    const showPopupForFeature = (feature) => {
+        const st = JSON.parse(feature.properties.station);
+        const rec = feature.properties.record ? JSON.parse(feature.properties.record) : null;
+        
         if (activePopup) activePopup.remove();
 
         activePopup = new maplibregl.Popup({ 
@@ -1200,27 +1267,35 @@ function bindPopupEvents(el, station, record) {
             closeButton: false, 
             closeOnClick: false 
         })
-        .setLngLat([el._st.lon, el._st.lat])
-        .setDOMContent(buildContent())
+        .setLngLat([st.lon, st.lat])
+        .setDOMContent(buildPopupContent(st, rec))
         .addTo(map);
     };
 
-    el.addEventListener('mouseenter', () => {
+    map.on('mouseenter', 'stations-webgl-layer', (e) => {
         if (pinnedStationId !== null) return;
-        show();
+        map.getCanvas().style.cursor = 'pointer';
+        if (e.features && e.features.length > 0) {
+            showPopupForFeature(e.features[0]);
+        }
     });
 
-    el.addEventListener('mouseleave', () => {
+    map.on('mouseleave', 'stations-webgl-layer', () => {
+        map.getCanvas().style.cursor = '';
         if (pinnedStationId === null) closeAllPopups();
     });
 
-    el.addEventListener('click', (e) => {
+    map.on('click', 'stations-webgl-layer', (e) => {
         e.stopPropagation();
-        if (pinnedStationId === el._st.id) {
-            closeAllPopups();
-        } else {
-            pinnedStationId = el._st.id;
-            show();
+        if (e.features && e.features.length > 0) {
+            const feature = e.features[0];
+            const st = JSON.parse(feature.properties.station);
+            if (pinnedStationId === st.id) {
+                closeAllPopups();
+            } else {
+                pinnedStationId = st.id;
+                showPopupForFeature(feature);
+            }
         }
     });
 }
