@@ -96,10 +96,9 @@ function findRegionCoords(code, name) {
     return null;
 }
 
-// 高可用 IP 定位驱动机（三重 HTTPS/CORS 并行容错 - 劣源 500ms 避让机制）
+// 高可用 IP 定位驱动机（BigDataCloud/ipapi 并行竞态 + 失败自动链式切换 ipinfo）
 async function fetchIpLocation() {
-    const fetchWithTimeout = async (url, parseFn, timeout = 2000, delay = 0) => {
-        if (delay > 0) await new Promise(r => setTimeout(r, delay));
+    const fetchWithTimeout = async (url, parseFn, timeout = 2000) => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeout);
         try {
@@ -117,23 +116,23 @@ async function fetchIpLocation() {
     };
 
     try {
-        // 使用 Promise.any 并发发起，ipinfo 延时 500ms 发起以优先保证高精度源抢答
-        return await Promise.any([
-            fetchWithTimeout(
-                'https://api.bigdatacloud.net/data/reverse-geocode-client',
-                d => (d && d.latitude && d.longitude) ? { lat: parseFloat(d.latitude), lon: parseFloat(d.longitude) } : null
-            ),
-            fetchWithTimeout(
-                'https://ipapi.co/json/',
-                d => (d && d.latitude && d.longitude) ? { lat: parseFloat(d.latitude), lon: parseFloat(d.longitude) } : null
-            ),
-            fetchWithTimeout(
-                'https://ipinfo.io/json',
-                d => (d && d.loc) ? { lat: parseFloat(d.loc.split(',')[0]), lon: parseFloat(d.loc.split(',')[1]) } : null,
-                2000,
-                500 // 延迟 500ms 发起请求
-            )
-        ]);
+        // 通道 1：BigDataCloud 首选，只有挂了/超时才链式切换到 ipinfo
+        const primaryChannel = fetchWithTimeout(
+            'https://api.bigdatacloud.net/data/reverse-geocode-client',
+            d => (d && d.latitude && d.longitude) ? { lat: parseFloat(d.latitude), lon: parseFloat(d.longitude) } : null
+        ).catch(() => fetchWithTimeout(
+            'https://ipinfo.io/json',
+            d => (d && d.loc) ? { lat: parseFloat(d.loc.split(',')[0]), lon: parseFloat(d.loc.split(',')[1]) } : null
+        ));
+
+        // 通道 2：ipapi 始终保持平行发起
+        const secondaryChannel = fetchWithTimeout(
+            'https://ipapi.co/json/',
+            d => (d && d.latitude && d.longitude) ? { lat: parseFloat(d.latitude), lon: parseFloat(d.longitude) } : null
+        );
+
+        // 两条大通道并行竞态，谁先成功返回谁
+        return await Promise.any([primaryChannel, secondaryChannel]);
     } catch (e) {
         return null;
     }
