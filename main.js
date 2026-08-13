@@ -362,19 +362,9 @@ async function applicationMain() {
             });
         });
 
-        map.on('moveend', pushStateToURL);
-
-        // 记录上一次渲染时是否处于视口裁剪模式（> 6.66）
-        let lastWasCull = map.getZoom() > 6.66;
         map.on('moveend', () => {
             pushStateToURL();
-            const currentZoom = map.getZoom();
-            const isCull = currentZoom > 6.66;
-            // 仅在以下两种情况才触发 DOM 重画：1. 当前处于小范围 (Zoom > 6.66)，移动/缩放后视口边界变了，需要重新裁剪；2. 刚刚跨越了 6.66 的临界点（从全量切到裁剪，或从裁剪恢复全量）
-            if (isCull || isCull !== lastWasCull) {
-                renderMapMarkers();
-                lastWasCull = isCull;
-            }
+            renderMapMarkers();
         });
 
         map.on('click', closeAllPopups);
@@ -898,7 +888,62 @@ function getTextColorForBackground(colorStr) {
     return brightness > 170 ? '#727272' : '#ffffff';
 }
 
-// 高动态位掩码过滤与 Canvas 站点标记控制系统（DPR 高清抗锯齿 / 内存 DOM 复用 / 零闪烁定稿版）
+// 【新增】动态获取屏幕/设备对应的站点显示数量阈值
+function getStationThreshold() {
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (window.innerWidth <= 768);
+    return isMobile ? 800 : 1000;
+}
+
+// 【新增】站点遮挡重叠筛选算法（基于屏幕像素坐标）
+function filterOverlappingStations(candidates, mask, isHistory) {
+    // 1. 根据当前渲染形态确定节点的像素宽高
+    let nodeW = 24, nodeH = 24;
+    if (mask === '000') {
+        nodeW = 14; nodeH = 14;
+    } else if (isHistory) {
+        nodeW = 24; nodeH = 16;
+    }
+    const nodeArea = nodeW * nodeH;
+    const OVERLAP_THRESHOLD = 0.88; // 重叠面积比例阈值 88%
+
+    // 2. 批量将地理坐标转换为当前地图视口的屏幕像素坐标 (x, y)
+    const projected = candidates.map(item => {
+        const p = map.project([item.st.lon, item.st.lat]);
+        return { st: item.st, record: item.record, x: p.x, y: p.y, removed: false };
+    });
+
+    const n = projected.length;
+    const activeIds = new Set();
+
+    // 3. 顺序筛选：id 小的在前（candidates 已按 id 升序）
+    for (let i = 0; i < n; i++) {
+        if (projected[i].removed) continue;
+        const a = projected[i];
+        activeIds.add(a.st.id);
+
+        for (let j = i + 1; j < n; j++) {
+            if (projected[j].removed) continue;
+            const b = projected[j];
+
+            const dx = Math.abs(a.x - b.x);
+            const dy = Math.abs(a.y - b.y);
+
+            // AABB 快速初筛：无重叠直接跳过
+            if (dx >= nodeW || dy >= nodeH) continue;
+
+            // 精算重叠面积
+            const overlapArea = (nodeW - dx) * (nodeH - dy);
+
+            // 超出重叠阈值，直接筛走 ID 较大的站点 b
+            if ((overlapArea / nodeArea) >= OVERLAP_THRESHOLD) {
+                projected[j].removed = true;
+            }
+        }
+    }
+    return activeIds;
+}
+
+// 高动态位掩码过滤与 Canvas 站点标记控制系统（支持遮挡不渲染与设备阈值优化）
 function renderMapMarkers() {
     closeAllPopups();
 
@@ -906,33 +951,26 @@ function renderMapMarkers() {
     const currentSystemSec = Math.floor(Date.now() / 1000);
     const recordMap = STATE.hourlyCache;
 
-    // 获取当前 Zoom 及视口边界（仅在 Zoom > 6.66 时计算视口）
-    const currentZoom = map.getZoom();
-    const enableCulling = currentZoom > 6.66;
-    
-    let minLng = 0, maxLng = 0, minLat = 0, maxLat = 0;
-    if (enableCulling) {
-        const bounds = map.getBounds();
-        const rawMinLng = bounds.getWest();
-        const rawMaxLng = bounds.getEast();
-        const rawMinLat = bounds.getSouth();
-        const rawMaxLat = bounds.getNorth();
+    // 1. 获取当前视口边界，统一外扩 30% 冗余边距
+    const bounds = map.getBounds();
+    const rawMinLng = bounds.getWest();
+    const rawMaxLng = bounds.getEast();
+    const rawMinLat = bounds.getSouth();
+    const rawMaxLat = bounds.getNorth();
 
-        // 手动计算四周 30% 的外扩余量
-        const lngMargin = (rawMaxLng - rawMinLng) * 0.3;
-        const latMargin = (rawMaxLat - rawMinLat) * 0.3;
+    const lngMargin = (rawMaxLng - rawMinLng) * 0.3;
+    const latMargin = (rawMaxLat - rawMinLat) * 0.3;
 
-        minLng = rawMinLng - lngMargin;
-        maxLng = rawMaxLng + lngMargin;
-        minLat = rawMinLat - latMargin;
-        maxLat = rawMaxLat + latMargin;
-    }
+    const minLng = rawMinLng - lngMargin;
+    const maxLng = rawMaxLng + lngMargin;
+    const minLat = rawMinLat - latMargin;
+    const maxLat = rawMaxLat + latMargin;
 
-    // 记录本次渲染视口内真正有效显示的站点 ID 集合
-    const activeStationIds = new Set();
+    // 2. 第一阶段：快速收集视口内所有数据有效的候选站点
+    const candidates = [];
 
     STATE.stations.forEach(st => {
-        // 1. 图层级别掩码过滤
+        // 图层级别掩码过滤
         let visible = false;
         if (st.level === '国控' && mask[0] === '1') visible = true;
         if (st.level === '省控' && mask[1] === '1') visible = true;
@@ -941,27 +979,20 @@ function renderMapMarkers() {
 
         if (!visible) return;
 
-        // 2. 视口裁剪
-        if (enableCulling) {
-            if (st.lon < minLng || st.lon > maxLng || st.lat < minLat || st.lat > maxLat) {
-                return;
-            }
+        // 视口边界裁剪
+        if (st.lon < minLng || st.lon > maxLng || st.lat < minLat || st.lat > maxLat) {
+            return;
         }
 
-        // 3. 提取与校验数据（提前至 DOM 复用拦截前，防止无效站点误占位）
+        // 数据提取与有效性校验
         let matchedRecord = null;
-        let nodeValue = '';
-        let rawVal = 0;
-        let hexColor = '#9ca3af';
-        let ageSeconds = 0;
-
         if (mask !== '000') {
             matchedRecord = recordMap.get(st.id);
             if (!matchedRecord) return;
 
             if (!STATE.isHistory) {
-                ageSeconds = currentSystemSec - matchedRecord.unixTime;
-                if (ageSeconds >= 8000) return; // 超过约 2 小时 13 分多一点无数据不渲染
+                const ageSeconds = currentSystemSec - matchedRecord.unixTime;
+                if (ageSeconds >= 8000) return;
 
                 if (STATE.urlParams.pol !== 'aqi') {
                     if (matchedRecord[STATE.urlParams.pol] === null || matchedRecord[STATE.urlParams.pol] === undefined) return;
@@ -969,15 +1000,50 @@ function renderMapMarkers() {
             }
 
             if (STATE.urlParams.pol === 'aqi') {
-                rawVal = getStationCalculatedAqi(matchedRecord, STATE.activeRule);
+                const rawVal = getStationCalculatedAqi(matchedRecord, STATE.activeRule);
                 if (rawVal === null || rawVal === undefined) return;
+            } else {
+                const rawVal = matchedRecord[STATE.urlParams.pol];
+                if (rawVal === null || rawVal === undefined) return;
+            }
+        }
+
+        candidates.push({ st, record: matchedRecord });
+    });
+
+    // 3. 第二阶段：依据设备阈值决定是否触发遮挡重叠筛选
+    const threshold = getStationThreshold();
+    let activeStationIds;
+
+    if (candidates.length > threshold) {
+        // 超过阈值：触发重叠筛选算法
+        activeStationIds = filterOverlappingStations(candidates, mask, STATE.isHistory);
+    } else {
+        // 未超阈值：保留所有视口候选站点
+        activeStationIds = new Set(candidates.map(c => c.st.id));
+    }
+
+    // 4. 第三阶段：DOM 节点更新与复用
+    candidates.forEach(({ st, record: matchedRecord }) => {
+        if (!activeStationIds.has(st.id)) return;
+
+        let nodeValue = '';
+        let rawVal = 0;
+        let hexColor = '#9ca3af';
+        let ageSeconds = 0;
+
+        if (mask !== '000') {
+            if (!STATE.isHistory) {
+                ageSeconds = currentSystemSec - matchedRecord.unixTime;
+            }
+
+            if (STATE.urlParams.pol === 'aqi') {
+                rawVal = getStationCalculatedAqi(matchedRecord, STATE.activeRule);
                 nodeValue = rawVal;
             } else {
                 rawVal = matchedRecord[STATE.urlParams.pol];
-                if (rawVal === null || rawVal === undefined) return;
-                
                 if (STATE.urlParams.pol === 'co') {
-                    rawVal = rawVal / 1000; // 毫克换算
+                    rawVal = rawVal / 1000;
                     nodeValue = rawVal.toFixed(1);
                 } else {
                     nodeValue = Math.round(rawVal);
@@ -986,26 +1052,23 @@ function renderMapMarkers() {
             hexColor = getColorAndLabel(STATE.urlParams.pol, rawVal, STATE.activeRule).color;
         }
 
-        // 4. 构造 Marker Key（含 ageBucket 分钟粒度更新，兼顾拖拽防闪烁与时间平滑演进）
+        // 构造 Marker Key
         const ageBucket = (!STATE.isHistory && mask !== '000') ? Math.floor(ageSeconds / 60) : 0;
         const recordTime = matchedRecord ? matchedRecord.unixTime : 0;
         const markerKey = `${st.id}_${mask}_${STATE.urlParams.pol}_${STATE.urlParams.aqi}_${STATE.activeRule}_${STATE.isHistory}_${STATE.currentTimestamp}_${recordTime}_${ageBucket}`;
 
-        activeStationIds.add(st.id);
-
-        // 5. 内存 DOM 复用拦截
+        // 内存 DOM 复用拦截
         const existing = STATE.markerMap.get(st.id);
         if (existing && existing.key === markerKey) {
             return;
         }
 
-        // 状态变动时先清空旧 DOM
         if (existing) {
             existing.marker.remove();
             STATE.markerMap.delete(st.id);
         }
 
-        // 6. 构建 DOM 节点
+        // 构建 DOM 节点
         const containerEl = document.createElement('div');
         containerEl.className = 'station-marker';
 
@@ -1063,7 +1126,6 @@ function renderMapMarkers() {
                     const canvas = document.createElement('canvas');
                     canvas.className = 'ring-canvas';
 
-                    // 高分屏 DPR 物理像素缩放，消除 Canvas 抗锯齿
                     const dpr = window.devicePixelRatio || 1;
                     canvas.width = 32 * dpr; 
                     canvas.height = 32 * dpr;
@@ -1127,7 +1189,7 @@ function renderMapMarkers() {
         STATE.markerMap.set(st.id, { marker, key: markerKey });
     });
 
-    // 7. 按需移除已移出视口或不需要显示的 Marker DOM
+    // 5. 移除不在当前 activeStationIds 集合中的过时 Marker DOM
     for (const [id, item] of STATE.markerMap.entries()) {
         if (!activeStationIds.has(id)) {
             item.marker.remove();
@@ -1135,7 +1197,7 @@ function renderMapMarkers() {
         }
     }
 
-    // 8. 同步 STATE.markerInstances 数组，确保全局兼容性
+    // 6. 同步 STATE.markerInstances 引用数组
     STATE.markerInstances = Array.from(STATE.markerMap.values()).map(item => item.marker);
 }
 
