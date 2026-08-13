@@ -30,6 +30,11 @@ const polList = ['co', 'so2', 'no2', 'o3', 'pm25', 'pm10', 'aqi'];
 
 let map;
 
+// 统一移动设备判定逻辑
+function isMobileDevice() {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (window.innerWidth <= 768);
+}
+
 // 根据短边计算 50 km 自适应缩放比
 function calculateZoomFor50Km(lat) {
     const shortEdge = Math.min(window.innerWidth, window.innerHeight);
@@ -368,7 +373,6 @@ async function applicationMain() {
         });
 
         map.on('click', closeAllPopups);
-        map.on('click', closeAllPopups);
 
         // 4. 驱动UI结构、绑定全局硬件设备中断事件
         buildTimeDropdownDOM();
@@ -706,13 +710,14 @@ document.getElementById('time-display-box').onclick = () => enterRealtimeView();
 const triggerBtn = document.getElementById('time-select-btn');
 const dropBox = document.getElementById('time-dropdown-container');
 dropBox.onclick = (e) => { e.stopPropagation(); };
+// 【修改】下拉框触发按钮点击事件
 triggerBtn.onclick = (e) => {
     e.stopPropagation();
     const isOpen = dropBox.style.display === 'block';
     dropBox.style.display = isOpen ? 'none' : 'block';
     if (!isOpen) {
         const btnRight = triggerBtn.getBoundingClientRect().right;
-        if (window.innerWidth > 640) {
+        if (!isMobileDevice()) {
             // 桌面端：左侧精准对齐 #time-display-box
             const boxLeft = document.getElementById('time-display-box').getBoundingClientRect().left;
             dropBox.style.width = `${Math.round(btnRight - boxLeft)}px`;
@@ -888,10 +893,9 @@ function getTextColorForBackground(colorStr) {
     return brightness > 170 ? '#727272' : '#ffffff';
 }
 
-// 【新增】动态获取屏幕/设备对应的站点显示数量阈值
+// 【修改】动态获取屏幕/设备对应的站点显示数量阈值
 function getStationThreshold() {
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (window.innerWidth <= 768);
-    return isMobile ? 800 : 1000;
+    return isMobileDevice() ? 800 : 1000;
 }
 
 // 【新增】站点遮挡重叠筛选算法（基于屏幕像素坐标）
@@ -945,8 +949,6 @@ function filterOverlappingStations(candidates, mask, isHistory) {
 
 // 高动态位掩码过滤与 Canvas 站点标记控制系统（支持遮挡不渲染与设备阈值优化）
 function renderMapMarkers() {
-    closeAllPopups();
-
     const mask = STATE.urlParams.level;
     const currentSystemSec = Math.floor(Date.now() / 1000);
     const recordMap = STATE.hourlyCache;
@@ -993,10 +995,6 @@ function renderMapMarkers() {
             if (!STATE.isHistory) {
                 const ageSeconds = currentSystemSec - matchedRecord.unixTime;
                 if (ageSeconds >= 8000) return;
-
-                if (STATE.urlParams.pol !== 'aqi') {
-                    if (matchedRecord[STATE.urlParams.pol] === null || matchedRecord[STATE.urlParams.pol] === undefined) return;
-                }
             }
 
             if (STATE.urlParams.pol === 'aqi') {
@@ -1052,10 +1050,10 @@ function renderMapMarkers() {
             hexColor = getColorAndLabel(STATE.urlParams.pol, rawVal, STATE.activeRule).color;
         }
 
-        // 构造 Marker Key
-        const ageBucket = (!STATE.isHistory && mask !== '000') ? Math.floor(ageSeconds / 60) : 0;
+        // 构造 Marker Key（【修改】移除对象字符串化 `${STATE.activeRule}`，保持纯净）
+        const ageBucket = (!STATE.isHistory && mask !== '000') ? Math.floor(Math.max(0, ageSeconds) / 60) : 0;
         const recordTime = matchedRecord ? matchedRecord.unixTime : 0;
-        const markerKey = `${st.id}_${mask}_${STATE.urlParams.pol}_${STATE.urlParams.aqi}_${STATE.activeRule}_${STATE.isHistory}_${STATE.currentTimestamp}_${recordTime}_${ageBucket}`;
+        const markerKey = `${st.id}_${mask}_${STATE.urlParams.pol}_${STATE.urlParams.aqi}_${STATE.isHistory}_${STATE.currentTimestamp}_${recordTime}_${ageBucket}`;
 
         // 内存 DOM 复用拦截
         const existing = STATE.markerMap.get(st.id);
@@ -1141,7 +1139,9 @@ function renderMapMarkers() {
                     const ctx = canvas.getContext('2d');
                     ctx.scale(dpr, dpr);
 
-                    const ratio = 1 - (ageSeconds / 3600);
+                    // 【修改】防止时钟偏差导致 ratio 计算超界
+                    const safeAge = Math.max(0, ageSeconds);
+                    const ratio = 1 - (safeAge / 3600);
                     ctx.clearRect(0, 0, 32, 32);
                     
                     const RING_COLOR = '#202020';
@@ -1228,16 +1228,16 @@ function bindPopupEvents(el, station, record) {
         const aqiTextColor = getTextColorForBackground(aqiBg); 
 
         const createBadge = (pType) => {
-            let v = rec[pType]; 
-            if (v === null || v === undefined) return `<span style="color:#9ca3af">--</span>`;
-            if (pType === 'co') {
-                v = (v / 1000).toFixed(1);
-            } else {
-                v = Math.round(v);
-            }
-            const bg = getColorAndLabel(pType, v, STATE.activeRule).color;
+            let rawV = rec[pType]; 
+            if (rawV === null || rawV === undefined) return `<span style="color:#9ca3af">--</span>`;
+            
+            // 【修改】保持计算数值为 Number 类型，避免传入 getColorAndLabel 时发生隐式字符串转换
+            const numVal = pType === 'co' ? rawV / 1000 : rawV;
+            const displayVal = pType === 'co' ? numVal.toFixed(1) : Math.round(numVal);
+
+            const bg = getColorAndLabel(pType, numVal, STATE.activeRule).color;
             const badgeTextColor = getTextColorForBackground(bg); 
-            return `<span class="pop-badge" style="background:${bg}; color:${badgeTextColor}">${v}</span>`;
+            return `<span class="pop-badge" style="background:${bg}; color:${badgeTextColor}">${displayVal}</span>`;
         };
 
         div.innerHTML = `
