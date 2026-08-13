@@ -895,7 +895,7 @@ function getTextColorForBackground(colorStr) {
 
 // 【修改】动态获取屏幕/设备对应的站点显示数量阈值
 function getStationThreshold() {
-    return isMobileDevice() ? 800 : 1000;
+    return isMobileDevice() ? 800 : 1200;
 }
 
 // 【新增】站点遮挡重叠筛选算法（基于屏幕像素坐标）
