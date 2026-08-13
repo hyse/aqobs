@@ -908,7 +908,7 @@ function filterOverlappingStations(candidates, mask, isHistory) {
         nodeW = 24; nodeH = 16;
     }
     const nodeArea = nodeW * nodeH;
-    const OVERLAP_THRESHOLD = 0.88; // 重叠面积比例阈值 88%
+    const OVERLAP_THRESHOLD = 0.8; // 重叠面积比例阈值 80%
 
     // 2. 批量将地理坐标转换为当前地图视口的屏幕像素坐标 (x, y)
     const projected = candidates.map(item => {
