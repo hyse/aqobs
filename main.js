@@ -101,9 +101,9 @@ function findRegionCoords(code, name) {
     return null;
 }
 
-// 高可用 IP 定位驱动机（BigDataCloud/ipapi 并行竞态 + 失败自动链式切换 ipinfo）
+// 高可用 IP 定位（BigDataCloud/ipinfo 与 ipwho/ipapi 双通道双向竞态+链式容灾）
 async function fetchIpLocation() {
-    const fetchWithTimeout = async (url, parseFn, timeout = 2000) => {
+    const fetchWithTimeout = async (url, parseFn, timeout = 1000) => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeout);
         try {
@@ -130,11 +130,14 @@ async function fetchIpLocation() {
             d => (d && d.loc) ? { lat: parseFloat(d.loc.split(',')[0]), lon: parseFloat(d.loc.split(',')[1]) } : null
         ));
 
-        // 通道 2：ipapi 始终保持平行发起
+        // 通道 2：ipwho.is 始终保持平行发起，若失败/被拦截则自动链式降级到 ipapi.co
         const secondaryChannel = fetchWithTimeout(
+            'https://ipwho.is/',
+            d => (d && d.success !== false && d.latitude && d.longitude) ? { lat: parseFloat(d.latitude), lon: parseFloat(d.longitude) } : null
+        ).catch(() => fetchWithTimeout(
             'https://ipapi.co/json/',
             d => (d && d.latitude && d.longitude) ? { lat: parseFloat(d.latitude), lon: parseFloat(d.longitude) } : null
-        );
+        ));
 
         // 两条大通道并行竞态，谁先成功返回谁
         return await Promise.any([primaryChannel, secondaryChannel]);
