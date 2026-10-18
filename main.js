@@ -1048,7 +1048,6 @@ function renderMapMarkers() {
     const candidates = [];
 
     STATE.stations.forEach(st => {
-        // 图层级别掩码过滤（支持末尾 a 联动判定更生、再生站点）
         const levelStr = STATE.urlParams.level || '111';
         const mask = levelStr.substring(0, 3);
         const hasA = levelStr.endsWith('a');
@@ -1056,13 +1055,9 @@ function renderMapMarkers() {
         // 图层级别掩码与 a 联动过滤
         let visible = false;
         if (st.level === '更生' || st.level === '再生') {
-            if (!hasA) {
-                visible = false;
-            } else if (mask === '000') {
+            // 必须有 a，且其显示受掩码最后一位 (mask[2]) 控制
+            if (hasA && mask[2] === '1') {
                 visible = true;
-            } else {
-                // 跟随国控、省控之外的其他类型，受最后一位数码 (mask[2]) 控制
-                visible = (mask[2] === '1');
             }
         } else if (mask === '000') {
             visible = true;
@@ -1079,29 +1074,23 @@ function renderMapMarkers() {
             return;
         }
 
-        // 数据提取与有效性校验
+        // 数据提取与有效性校验：所有站点（包括更生/再生）在非 000 模式下无数据均直接跳过
         let matchedRecord = null;
         if (mask !== '000') {
             matchedRecord = recordMap.get(st.id);
-            if (!matchedRecord && (st.level === '更生' || st.level === '再生')) {
-                // 更生、再生若暂无时序记录，允许 matchedRecord 为 null 以空样式展示
-            } else if (!matchedRecord) {
-                return;
-            }
+            if (!matchedRecord) return; // 无记录直接跳过，绝不报错
 
-            if (!STATE.isHistory && matchedRecord) {
+            if (!STATE.isHistory) {
                 const ageSeconds = currentSystemSec - matchedRecord.unixTime;
                 if (ageSeconds >= 8000) return;
             }
 
-            if (matchedRecord) {
-                if (STATE.urlParams.pol === 'aqi') {
-                    const rawVal = getStationCalculatedAqi(matchedRecord, STATE.activeRule);
-                    if (rawVal === null || rawVal === undefined && (st.level !== '更生' && st.level !== '再生')) return;
-                } else {
-                    const rawVal = matchedRecord[STATE.urlParams.pol];
-                    if (rawVal === null || rawVal === undefined && (st.level !== '更生' && st.level !== '再生')) return;
-                }
+            if (STATE.urlParams.pol === 'aqi') {
+                const rawVal = getStationCalculatedAqi(matchedRecord, STATE.activeRule);
+                if (rawVal === null || rawVal === undefined) return;
+            } else {
+                const rawVal = matchedRecord[STATE.urlParams.pol];
+                if (rawVal === null || rawVal === undefined) return;
             }
         }
 
