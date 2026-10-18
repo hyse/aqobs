@@ -1303,12 +1303,10 @@ infoModal.onclick = (e) => e.stopPropagation();
 document.addEventListener('click', () => { infoModal.style.display = 'none'; });
 
 const helpTexts = [
-    "<h4>aqobs 观测系统概述</h4><p>本平台依托高效率 WebAssembly 容器本地解析时序 SQLite 关系库，无需依赖高延迟后端集群即可在前端完成全量环境要素空间差值图层解析与历史演化放映。</p>",
-    "<h4>中国国家标准 (GB 3095-2012)</h4><p>内置标准分段多级线性内插算法。系统能自动识别 CO 要素的量纲差异，并在运算前将其从微克自动升阶换算为毫克。</p>",
-    "<h4>美国 EPA 空气质量规范</h4><p>契合美标分段浓度阶梯函数。针对特定颗粒物在低浓度边界的健康响应进行了针对性的高阶动态加权。</p>",
-    "<h4>数据源底层定义</h4><p>数据源挂载于本地 <code>/data/aqdata.db</code>。站点坐标采用无偏 WGS-84 投影地理坐标系存储，与底图几何中心轴完全对齐。</p>",
+    "<h4>aqobs 系统概述</h4><p>高时效、全收集、全公开、免登录，美丽、强大、不老不死的空气质量聚合平台。</p>",
+    "<h4>数据源</h4><p>各地公开的空气质量发布网页、应用等。</p>",
     "<h4>快捷键列表</h4><ul><li><b>W / S</b> : 上下循环选择显示指标 (CO~AQI)</li><li><b>Q / E</b> : 升降轮换多国 AQI 标准</li><li><b>A / D</b> : 历史时序向后/向前回溯（长按触发自动放映）</li><li><b>P</b> : 切换平面地图与立体地球仪</li><li><b>T</b> : 唤醒/隐藏时间整点下拉选择网格</li><li><b>R</b> : 一键消除时轴切回实时追踪视图</li><li><b>I</b> : 弹出/关闭本系统说明看板</li></ul>",
-    "<h4>关于</h4><p>aqobs v0.2<br/>High-Resolution Spatial-Temporal Environmental Spatial Terminal.</p>"
+    "<h4>关于</h4><p>aqobs :: 空气质量地图 v0.3<br/>High-Resolution Air Quality Observatory System<br/>AWS Cloudflare GitHub</p>"
 ];
 
 function switchTab(idx) {
