@@ -901,8 +901,13 @@ function getStationThreshold() {
     return isMobileDevice() ? 600 : 1200;
 }
 
-// 【新增】站点遮挡重叠筛选算法（基于屏幕像素坐标）
+// 站点遮挡重叠筛选算法（基于屏幕像素坐标及新增更生/再生规则）
 function filterOverlappingStations(candidates, mask, isHistory) {
+    // 保证 stationid 更小的站点排在前面优先处理
+    candidates.sort((c1, c2) => {
+        return String(c1.st.id).localeCompare(String(c2.st.id), undefined, { numeric: true });
+    });
+
     // 1. 根据当前渲染形态确定节点的像素宽高
     let nodeW = 24, nodeH = 24;
     if (mask === '000') {
@@ -922,11 +927,14 @@ function filterOverlappingStations(candidates, mask, isHistory) {
     const n = projected.length;
     const activeIds = new Set();
 
-    // 3. 顺序筛选：id 小的在前（candidates 已按 id 升序）
+    const isGeng = (lvl) => lvl === '更生';
+    const isZai = (lvl) => lvl === '再生';
+    const isGengOrZai = (lvl) => isGeng(lvl) || isZai(lvl);
+
+    // 3. 顺序筛选：id 小的在前优先保留
     for (let i = 0; i < n; i++) {
         if (projected[i].removed) continue;
         const a = projected[i];
-        activeIds.add(a.st.id);
 
         for (let j = i + 1; j < n; j++) {
             if (projected[j].removed) continue;
@@ -938,13 +946,38 @@ function filterOverlappingStations(candidates, mask, isHistory) {
             // AABB 快速初筛：无重叠直接跳过
             if (dx >= nodeW || dy >= nodeH) continue;
 
-            // 精算重叠面积
-            const overlapArea = (nodeW - dx) * (nodeH - dy);
+            const lvlA = a.st.level;
+            const lvlB = b.st.level;
 
-            // 超出重叠阈值，直接筛走 ID 较大的站点 b
+            // 规则：如果更生、再生站点显示的图标和之外的其他类型哪怕只有一点接触，更生、再生站点都不得显示
+            if (isGengOrZai(lvlA) && !isGengOrZai(lvlB)) {
+                a.removed = true;
+                break;
+            }
+            if (!isGengOrZai(lvlA) && isGengOrZai(lvlB)) {
+                b.removed = true;
+                continue;
+            }
+
+            // 规则：再生和更生有接触的，再生不得显示
+            if (isZai(lvlA) && isGeng(lvlB)) {
+                a.removed = true;
+                break;
+            }
+            if (isGeng(lvlA) && isZai(lvlB)) {
+                b.removed = true;
+                continue;
+            }
+
+            // 规则：更生、再生站点各自内部之间 / 其他普通站点沿用现有宽容设定 (70%重叠阈值)
+            const overlapArea = (nodeW - dx) * (nodeH - dy);
             if ((overlapArea / nodeArea) >= OVERLAP_THRESHOLD) {
                 projected[j].removed = true;
             }
+        }
+
+        if (!projected[i].removed) {
+            activeIds.add(a.st.id);
         }
     }
     return activeIds;
