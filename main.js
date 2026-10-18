@@ -400,6 +400,26 @@ async function applicationMain() {
     }
 }
 
+// 刷新右上角独立按钮的状态与图标
+function updateTopRightUI() {
+    const projBtn = document.getElementById('proj-trigger');
+    const regionBtn = document.getElementById('region-trigger');
+    if (projBtn) {
+        if (STATE.urlParams.proj === '3d') {
+            projBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/></svg>`;
+            projBtn.title = "当前：3D地球仪 (按P切换)";
+        } else {
+            projBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>`;
+            projBtn.title = "当前：2D平面地图 (按P切换)";
+        }
+    }
+    if (regionBtn) {
+        const hasA = (STATE.urlParams.level || '').endsWith('a');
+        regionBtn.innerText = hasA ? 'W' : 'EA';
+        regionBtn.title = hasA ? "当前：叠加全球 (W)" : "当前：仅东亚 (EA)";
+    }
+}
+
 // 精密分段线性内插分值算法引擎
 function calcSingleIaqi(polType, value, rule) {
     if (value === null || value === undefined || isNaN(value)) return null;
@@ -683,6 +703,7 @@ function syncUIStateAndURL() {
     }
 
     pushStateToURL();
+    updateTopRightUI();
 }
 
 setInterval(() => {
@@ -1026,12 +1047,28 @@ function renderMapMarkers() {
     const candidates = [];
 
     STATE.stations.forEach(st => {
+        // 图层级别掩码过滤（支持末尾 a 联动判定更生、再生站点）
+        const levelStr = STATE.urlParams.level || '111';
+        const mask = levelStr.substring(0, 3);
+        const hasA = levelStr.endsWith('a');
+
         // 图层级别掩码过滤
         let visible = false;
-        if (st.level === '国控' && mask[0] === '1') visible = true;
-        if (st.level === '省控' && mask[1] === '1') visible = true;
-        if (st.level !== '国控' && st.level !== '省控' && mask[2] === '1') visible = true;
-        if (mask === '000') visible = true;
+        if (mask === '000') {
+            if (st.level === '更生' || st.level === '再生') {
+                visible = hasA;
+            } else {
+                visible = true;
+            }
+        } else {
+            if (st.level === '国控' && mask[0] === '1') visible = true;
+            else if (st.level === '省控' && mask[1] === '1') visible = true;
+            else if (st.level === '更生' || st.level === '再生') {
+                if (hasA) visible = true;
+            } else if (st.level !== '国控' && st.level !== '省控' && mask[2] === '1') {
+                visible = true;
+            }
+        }
 
         if (!visible) return;
 
@@ -1351,6 +1388,27 @@ function toggleInfoPanel() {
 }
 
 document.getElementById('info-trigger').onclick = (e) => { e.stopPropagation(); toggleInfoPanel(); };
+// 绑定右上角各独立按钮的点击事件
+document.getElementById('proj-trigger').onclick = (e) => {
+    e.stopPropagation();
+    STATE.urlParams.proj = STATE.urlParams.proj === '3d' ? '2d' : '3d';
+    updateMapProjection();
+    pushStateToURL();
+    updateTopRightUI();
+};
+
+document.getElementById('region-trigger').onclick = (e) => {
+    e.stopPropagation();
+    const currentLevel = STATE.urlParams.level || '111';
+    if (currentLevel.endsWith('a')) {
+        STATE.urlParams.level = currentLevel.slice(0, -1);
+    } else {
+        STATE.urlParams.level = currentLevel + 'a';
+    }
+    syncUIStateAndURL();
+    renderMapMarkers();
+    updateTopRightUI();
+};
 infoModal.onclick = (e) => e.stopPropagation();
 document.addEventListener('click', () => { infoModal.style.display = 'none'; });
 

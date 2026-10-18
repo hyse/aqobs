@@ -182,15 +182,35 @@
         .pop-level { font-size: 10px; color: #4b5563; background: #e5e7eb; padding: 1px 4px; border-radius: 3px; font-weight: bold; }
         .pop-badge { padding: 1px 5px; border-radius: 3px; color: white; font-weight: bold; display: inline-block; min-width: 24px; text-align: center; }
 
-        /* 右上角多标签信息盒子 */
+        /* 原有的 #info-trigger 样式保持不变 */
         #info-trigger {
             position: absolute; top: 12px; right: 12px; width: 30px; height: 30px;
             border-radius: 50%; background: var(--bg-glass); display: flex; align-items: center;
             justify-content: center; font-weight: bold; font-size: 16px; font-family: serif;
             box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 999; cursor: pointer; border: 1px solid var(--border-color); user-select: none;
         }
+        #info-trigger:hover { border-color: var(--accent-color); color: var(--accent-color); }
+
+        /* 新增：中间的投影切换按钮（top: 52px，实现 10px 舒适间距） */
+        #proj-trigger {
+            position: absolute; top: 52px; right: 12px; width: 30px; height: 30px;
+            border-radius: 50%; background: var(--bg-glass); display: flex; align-items: center;
+            justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 999; cursor: pointer; border: 1px solid var(--border-color); user-select: none;
+        }
+        #proj-trigger:hover { border-color: var(--accent-color); color: var(--accent-color); }
+
+        /* 新增：最下方的区域叠加按钮（top: 92px，再次间隔 10px） */
+        #region-trigger {
+            position: absolute; top: 92px; right: 12px; width: 30px; height: 30px;
+            border-radius: 50%; background: var(--bg-glass); display: flex; align-items: center;
+            justify-content: center; font-weight: bold; font-size: 11px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 999; cursor: pointer; border: 1px solid var(--border-color); user-select: none;
+        }
+        #region-trigger:hover { border-color: var(--accent-color); color: var(--accent-color); }
+
+        /* 调整 info-modal 弹窗位置至按钮组左侧，防止挡住右侧按钮 */
         #info-modal {
-            position: absolute; top: 52px; right: 12px; width: 310px; background: var(--bg-glass);
+            position: absolute; top: 12px; right: 52px; width: 310px; background: var(--bg-glass);
             border-radius: 6px; border: 1px solid var(--border-color); box-shadow: 0 4px 20px rgba(0,0,0,0.2);
             display: none; flex-direction: column; z-index: 999; overflow: hidden;
         }
@@ -208,6 +228,9 @@
     
     <div id="map"></div>
     <div id="info-trigger">i</div>
+    <div id="info-trigger" title="系统说明">i</div>
+    <div id="proj-trigger" title="切换投影"></div>
+    <div id="region-trigger" title="区域叠加">EA</div>
     
     <div id="info-modal">
         <div class="modal-tabs">
