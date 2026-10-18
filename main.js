@@ -1402,7 +1402,8 @@ document.getElementById('region-trigger').onclick = async (e) => {
         STATE.urlParams.level = currentLevel + 'a';
     }
     syncUIStateAndURL();
-    if (STATE.urlParams.level !== '000') {
+    const mask = (STATE.urlParams.level || '').substring(0, 3);
+    if (mask !== '000') {
         const ts = STATE.isHistory ? STATE.currentTimestamp : STATE.timeTimelineList[STATE.timeTimelineList.length - 1];
         if (ts) await window.loadHourlyDataFromServer(ts);
     }
