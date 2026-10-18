@@ -901,11 +901,14 @@ function getStationThreshold() {
     return isMobileDevice() ? 600 : 1200;
 }
 
-// 站点遮挡重叠筛选算法（基于屏幕像素坐标及新增更生/再生规则）
-function filterOverlappingStations(candidates, mask, isHistory) {
-    // 保证 stationid 更小的站点排在前面优先处理
-    candidates.sort((c1, c2) => {
-        return String(c1.st.id).localeCompare(String(c2.st.id), undefined, { numeric: true });
+// 【修改】站点重叠筛选：跨类型/更生再生互斥规则无条件严格执行；各自内部保持宽容（70%阈值）
+function filterOverlappingStations(candidates, mask, isHistory, checkLenient) {
+    // 拷贝并按 st.id 升序排列，确保小 ID 优先处理
+    const sorted = [...candidates].sort((a, b) => {
+        if (typeof a.st.id === 'number' && typeof b.st.id === 'number') {
+            return a.st.id - b.st.id;
+        }
+        return String(a.st.id).localeCompare(String(b.st.id));
     });
 
     // 1. 根据当前渲染形态确定节点的像素宽高
@@ -916,10 +919,10 @@ function filterOverlappingStations(candidates, mask, isHistory) {
         nodeW = 24; nodeH = 16;
     }
     const nodeArea = nodeW * nodeH;
-    const OVERLAP_THRESHOLD = 0.7; // 重叠面积比例阈值 70%
+    const OVERLAP_THRESHOLD = 0.7; // 内部宽容重叠比例阈值 70%
 
     // 2. 批量将地理坐标转换为当前地图视口的屏幕像素坐标 (x, y)
-    const projected = candidates.map(item => {
+    const projected = sorted.map(item => {
         const p = map.project([item.st.lon, item.st.lat]);
         return { st: item.st, record: item.record, x: p.x, y: p.y, removed: false };
     });
@@ -927,14 +930,12 @@ function filterOverlappingStations(candidates, mask, isHistory) {
     const n = projected.length;
     const activeIds = new Set();
 
-    const isGeng = (lvl) => lvl === '更生';
-    const isZai = (lvl) => lvl === '再生';
-    const isGengOrZai = (lvl) => isGeng(lvl) || isZai(lvl);
-
-    // 3. 顺序筛选：id 小的在前优先保留
+    // 3. 顺序筛选
     for (let i = 0; i < n; i++) {
         if (projected[i].removed) continue;
         const a = projected[i];
+
+        let shouldRemoveA = false;
 
         for (let j = i + 1; j < n; j++) {
             if (projected[j].removed) continue;
@@ -943,37 +944,54 @@ function filterOverlappingStations(candidates, mask, isHistory) {
             const dx = Math.abs(a.x - b.x);
             const dy = Math.abs(a.y - b.y);
 
-            // AABB 快速初筛：无重叠直接跳过
+            // AABB 快速初筛：无接触直接跳过
             if (dx >= nodeW || dy >= nodeH) continue;
 
-            const lvlA = a.st.level;
-            const lvlB = b.st.level;
+            const levelA = a.st.level;
+            const levelB = b.st.level;
 
-            // 规则：如果更生、再生站点显示的图标和之外的其他类型哪怕只有一点接触，更生、再生站点都不得显示
-            if (isGengOrZai(lvlA) && !isGengOrZai(lvlB)) {
-                a.removed = true;
-                break;
-            }
-            if (!isGengOrZai(lvlA) && isGengOrZai(lvlB)) {
-                b.removed = true;
-                continue;
-            }
+            const isA_Geng = (levelA === '更生');
+            const isA_Zai = (levelA === '再生');
+            const isB_Geng = (levelB === '更生');
+            const isB_Zai = (levelB === '再生');
 
-            // 规则：再生和更生有接触的，再生不得显示
-            if (isZai(lvlA) && isGeng(lvlB)) {
-                a.removed = true;
-                break;
-            }
-            if (isGeng(lvlA) && isZai(lvlB)) {
-                b.removed = true;
-                continue;
-            }
+            const isA_Special = isA_Geng || isA_Zai;
+            const isB_Special = isB_Geng || isB_Zai;
+            const isA_Other = !isA_Special;
+            const isB_Other = !isB_Special;
 
-            // 规则：更生、再生站点各自内部之间 / 其他普通站点沿用现有宽容设定 (70%重叠阈值)
-            const overlapArea = (nodeW - dx) * (nodeH - dy);
-            if ((overlapArea / nodeArea) >= OVERLAP_THRESHOLD) {
+            // 【规则 1：无条件】其他类型对更生、再生 —— 只要有接触，更生、再生站点无条件不得显示
+            if (isA_Other && isB_Special) {
                 projected[j].removed = true;
+                continue;
             }
+            if (isA_Special && isB_Other) {
+                shouldRemoveA = true;
+                break;
+            }
+
+            // 【规则 2：无条件】更生对再生 —— 只要有接触，再生站点无条件不得显示
+            if (isA_Geng && isB_Zai) {
+                projected[j].removed = true;
+                continue;
+            }
+            if (isA_Zai && isB_Geng) {
+                shouldRemoveA = true;
+                break;
+            }
+
+            // 【规则 3：条件触发】各自内部之间 / 其他类型内部之间 —— 仅在超阈值（checkLenient 为 true）时应用 70% 宽容规则
+            if (checkLenient) {
+                const overlapArea = (nodeW - dx) * (nodeH - dy);
+                if ((overlapArea / nodeArea) >= OVERLAP_THRESHOLD) {
+                    projected[j].removed = true;
+                }
+            }
+        }
+
+        if (shouldRemoveA) {
+            projected[i].removed = true;
+            continue;
         }
 
         if (!projected[i].removed) {
@@ -1045,19 +1063,20 @@ function renderMapMarkers() {
         candidates.push({ st, record: matchedRecord });
     });
 
-    // 3. 第二阶段：依据设备阈值决定是否触发遮挡重叠筛选
+    // 3. 第二阶段：无论站点数量多少，都必须执行筛选以保证跨类型/更生再生互斥规则生效
     const threshold = getStationThreshold();
-    let activeStationIds;
+    const checkLenient = candidates.length > threshold; // 仅当超阈值时才对同类内部启用 70% 宽容过滤
+    const activeStationIds = filterOverlappingStations(candidates, mask, STATE.isHistory, checkLenient);
 
-    if (candidates.length > threshold) {
-        // 超过阈值：触发重叠筛选算法
-        activeStationIds = filterOverlappingStations(candidates, mask, STATE.isHistory);
-    } else {
-        // 未超阈值：保留所有视口候选站点
-        activeStationIds = new Set(candidates.map(c => c.st.id));
-    }
+    // 4. 第三阶段：将 candidates 按 st.id 降序排序，保证 stationid 更小的站点后添加并显示在上方（遮挡更大站点）
+    candidates.sort((a, b) => {
+        if (typeof a.st.id === 'number' && typeof b.st.id === 'number') {
+            return b.st.id - a.st.id;
+        }
+        return String(b.st.id).localeCompare(String(b.st.id));
+    });
 
-    // 4. 第三阶段：DOM 节点更新与复用
+    // 5. 第四阶段：DOM 节点更新与复用
     candidates.forEach(({ st, record: matchedRecord }) => {
         if (!activeStationIds.has(st.id)) return;
 
@@ -1225,7 +1244,7 @@ function renderMapMarkers() {
         STATE.markerMap.set(st.id, { marker, key: markerKey });
     });
 
-    // 5. 移除不在当前 activeStationIds 集合中的过时 Marker DOM
+    // 6. 移除不在当前 activeStationIds 集合中的过时 Marker DOM
     for (const [id, item] of STATE.markerMap.entries()) {
         if (!activeStationIds.has(id)) {
             item.marker.remove();
@@ -1233,7 +1252,7 @@ function renderMapMarkers() {
         }
     }
 
-    // 6. 同步 STATE.markerInstances 引用数组
+    // 7. 同步 STATE.markerInstances 引用数组
     STATE.markerInstances = Array.from(STATE.markerMap.values()).map(item => item.marker);
 }
 
