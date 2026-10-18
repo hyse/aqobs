@@ -1055,8 +1055,8 @@ function renderMapMarkers() {
         // 图层级别掩码与 a 联动过滤
         let visible = false;
         if (st.level === '更生' || st.level === '再生') {
-            // 必须有 a，且其显示受掩码最后一位 (mask[2]) 控制
-            if (hasA && mask[2] === '1') {
+            // 必须有 a，且受第三位控制 (XX1a) 或处于 000a 模式下显示为圆圈
+            if (hasA && (mask[2] === '1' || mask === '000')) {
                 visible = true;
             }
         } else if (mask === '000') {
@@ -1081,7 +1081,7 @@ function renderMapMarkers() {
             if (!matchedRecord) return; // 无记录直接跳过，绝不报错
 
             if (!STATE.isHistory) {
-                const ageSeconds = currentSystemSec - matchedRecord.unixTime;
+                const ageSeconds = currentSystemSec - (matchedRecord?.unixTime || 0);
                 if (ageSeconds >= 8000) return;
             }
 
@@ -1141,7 +1141,7 @@ function renderMapMarkers() {
 
         // 【关键修复】对 matchedRecord 进行空指针安全防护，防止 000 报错
         const ageBucket = (!STATE.isHistory && mask !== '000' && matchedRecord) ? Math.floor(Math.max(0, ageSeconds) / 60) : 0;
-        const recordTime = matchedRecord ? matchedRecord.unixTime : 0;
+        const recordTime = matchedRecord?.unixTime || 0;
         const markerKey = `${st.id}_${mask}_${STATE.urlParams.pol}_${STATE.urlParams.aqi}_${STATE.isHistory}_${STATE.currentTimestamp}_${recordTime}_${ageBucket}`;
 
         // 内存 DOM 复用拦截
@@ -1393,7 +1393,7 @@ document.getElementById('proj-trigger').onclick = (e) => {
     pushStateToURL();
     updateTopRightUI();
 };
-document.getElementById('region-trigger').onclick = (e) => {
+document.getElementById('region-trigger').onclick = async (e) => {
     e.stopPropagation();
     const currentLevel = STATE.urlParams.level || '111';
     if (currentLevel.endsWith('a')) {
@@ -1402,6 +1402,10 @@ document.getElementById('region-trigger').onclick = (e) => {
         STATE.urlParams.level = currentLevel + 'a';
     }
     syncUIStateAndURL();
+    if (STATE.urlParams.level !== '000') {
+        const ts = STATE.isHistory ? STATE.currentTimestamp : STATE.timeTimelineList[STATE.timeTimelineList.length - 1];
+        if (ts) await window.loadHourlyDataFromServer(ts);
+    }
     renderMapMarkers();
     updateTopRightUI();
 };
