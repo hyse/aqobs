@@ -388,6 +388,7 @@ async function applicationMain() {
 
         syncUIStateAndURL();
         renderMapMarkers();
+        updateTopRightUI();
 
         // 关闭阻断加载界面
         const loader = document.getElementById('loader');
@@ -1387,8 +1388,8 @@ function toggleInfoPanel() {
     if (isClosed) switchTab(0);
 }
 
-document.getElementById('info-trigger').onclick = (e) => { e.stopPropagation(); toggleInfoPanel(); };
 // 绑定右上角各独立按钮的点击事件
+document.getElementById('info-trigger').onclick = (e) => { e.stopPropagation(); toggleInfoPanel(); };
 document.getElementById('proj-trigger').onclick = (e) => {
     e.stopPropagation();
     STATE.urlParams.proj = STATE.urlParams.proj === '3d' ? '2d' : '3d';
@@ -1396,7 +1397,6 @@ document.getElementById('proj-trigger').onclick = (e) => {
     pushStateToURL();
     updateTopRightUI();
 };
-
 document.getElementById('region-trigger').onclick = (e) => {
     e.stopPropagation();
     const currentLevel = STATE.urlParams.level || '111';
