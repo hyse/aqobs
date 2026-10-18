@@ -1025,7 +1025,10 @@ function filterOverlappingStations(candidates, mask, isHistory, checkLenient) {
 
 // 高动态位掩码过滤与 Canvas 站点标记控制系统（支持遮挡不渲染与设备阈值优化）
 function renderMapMarkers() {
-    const mask = STATE.urlParams.level;
+    const levelStr = STATE.urlParams.level || '111';
+    const mask = levelStr.substring(0, 3);
+    const hasA = levelStr.endsWith('a');
+
     const currentSystemSec = Math.floor(Date.now() / 1000);
     const recordMap = STATE.hourlyCache;
 
@@ -1048,10 +1051,6 @@ function renderMapMarkers() {
     const candidates = [];
 
     STATE.stations.forEach(st => {
-        const levelStr = STATE.urlParams.level || '111';
-        const mask = levelStr.substring(0, 3);
-        const hasA = levelStr.endsWith('a');
-
         // 图层级别掩码与 a 联动过滤
         let visible = false;
         if (st.level === '更生' || st.level === '再生') {
@@ -1081,7 +1080,7 @@ function renderMapMarkers() {
             if (!matchedRecord) return; // 无记录直接跳过，绝不报错
 
             if (!STATE.isHistory) {
-                const ageSeconds = currentSystemSec - (matchedRecord?.unixTime || 0);
+                const ageSeconds = currentSystemSec - matchedRecord.unixTime;
                 if (ageSeconds >= 8000) return;
             }
 
