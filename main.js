@@ -1053,22 +1053,23 @@ function renderMapMarkers() {
         const mask = levelStr.substring(0, 3);
         const hasA = levelStr.endsWith('a');
 
-        // 图层级别掩码过滤
+        // 图层级别掩码与 a 联动过滤
         let visible = false;
-        if (mask === '000') {
-            if (st.level === '更生' || st.level === '再生') {
-                visible = hasA;
-            } else {
+        if (st.level === '更生' || st.level === '再生') {
+            if (!hasA) {
+                visible = false;
+            } else if (mask === '000') {
                 visible = true;
+            } else {
+                // 跟随国控、省控之外的其他类型，受最后一位数码 (mask[2]) 控制
+                visible = (mask[2] === '1');
             }
+        } else if (mask === '000') {
+            visible = true;
         } else {
             if (st.level === '国控' && mask[0] === '1') visible = true;
             else if (st.level === '省控' && mask[1] === '1') visible = true;
-            else if (st.level === '更生' || st.level === '再生') {
-                if (hasA) visible = true;
-            } else if (st.level !== '国控' && st.level !== '省控' && mask[2] === '1') {
-                visible = true;
-            }
+            else if (st.level !== '国控' && st.level !== '省控' && mask[2] === '1') visible = true;
         }
 
         if (!visible) return;
@@ -1082,19 +1083,25 @@ function renderMapMarkers() {
         let matchedRecord = null;
         if (mask !== '000') {
             matchedRecord = recordMap.get(st.id);
-            if (!matchedRecord) return;
+            if (!matchedRecord && (st.level === '更生' || st.level === '再生')) {
+                // 更生、再生若暂无时序记录，允许 matchedRecord 为 null 以空样式展示
+            } else if (!matchedRecord) {
+                return;
+            }
 
-            if (!STATE.isHistory) {
+            if (!STATE.isHistory && matchedRecord) {
                 const ageSeconds = currentSystemSec - matchedRecord.unixTime;
                 if (ageSeconds >= 8000) return;
             }
 
-            if (STATE.urlParams.pol === 'aqi') {
-                const rawVal = getStationCalculatedAqi(matchedRecord, STATE.activeRule);
-                if (rawVal === null || rawVal === undefined) return;
-            } else {
-                const rawVal = matchedRecord[STATE.urlParams.pol];
-                if (rawVal === null || rawVal === undefined) return;
+            if (matchedRecord) {
+                if (STATE.urlParams.pol === 'aqi') {
+                    const rawVal = getStationCalculatedAqi(matchedRecord, STATE.activeRule);
+                    if (rawVal === null || rawVal === undefined && (st.level !== '更生' && st.level !== '再生')) return;
+                } else {
+                    const rawVal = matchedRecord[STATE.urlParams.pol];
+                    if (rawVal === null || rawVal === undefined && (st.level !== '更生' && st.level !== '再生')) return;
+                }
             }
         }
 
@@ -1143,8 +1150,8 @@ function renderMapMarkers() {
             hexColor = getColorAndLabel(STATE.urlParams.pol, rawVal, STATE.activeRule).color;
         }
 
-        // 构造 Marker Key（【修改】移除对象字符串化 `${STATE.activeRule}`，保持纯净）
-        const ageBucket = (!STATE.isHistory && mask !== '000') ? Math.floor(Math.max(0, ageSeconds) / 60) : 0;
+        // 【关键修复】对 matchedRecord 进行空指针安全防护，防止 000 报错
+        const ageBucket = (!STATE.isHistory && mask !== '000' && matchedRecord) ? Math.floor(Math.max(0, ageSeconds) / 60) : 0;
         const recordTime = matchedRecord ? matchedRecord.unixTime : 0;
         const markerKey = `${st.id}_${mask}_${STATE.urlParams.pol}_${STATE.urlParams.aqi}_${STATE.isHistory}_${STATE.currentTimestamp}_${recordTime}_${ageBucket}`;
 
