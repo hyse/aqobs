@@ -348,11 +348,15 @@ async function applicationMain() {
                 // 对所有城市/地名标注 (Symbol) 进行强制统一化改造
                 if (layer.type === 'symbol') {
 
-                    // --- 强行统一城镇文字内容：只留主地名，砍掉所有别名/外语 ---
+                    // --- 强行统一城镇文字内容：只留中文，去掉英文和拼音 ---
                     if (placeReg.test(id) || districtReg.test(id)) {
-                        // 逻辑链：优先简体 -> 砍斜杠及后缀 -> 砍左括号及后缀(解决不配对) -> 砍空格及后缀 -> 兜底原名
-                        const cleanName = ["replace", ["replace", ["replace", ["coalesce", ["get", "name:zh-Hans"], ["get", "name:zh"]], "[\\/;].*$", ""], "[\\(（].*$", ""], "\\s+.*$", ""];
-                        map.setLayoutProperty(id, 'text-field', ["case", ["any", ["has", "name:zh-Hans"], ["has", "name:zh"]], cleanName, ["get", "name"]]);
+                        // 核心逻辑：取中文名，如果没有则取原名，然后用一条正则切掉所有空格/斜杠/分号/括号及其后面的内容
+                        map.setLayoutProperty(id, 'text-field', [
+                            "replace",
+                            ["coalesce", ["get", "name:zh-Hans"], ["get", "name:zh"], ["get", "name"]],
+                            "[\\s\\/;()（）].*$", 
+                            ""
+                        ]);
                     }
 
                     // --- 弯度太大的路就不标名字了，省算力 ---
