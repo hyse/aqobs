@@ -350,8 +350,9 @@ async function applicationMain() {
 
                     // --- 强行统一城镇文字内容：只留中文，去掉英文和拼音 ---
                     if (placeReg.test(id) || districtReg.test(id)) {
-                        // 使用 coalesce 确保：有中文显示中文，没中文显示空，绝不显示默认的英文/拼音名
-                        map.setLayoutProperty(id, 'text-field', ['coalesce', ['get', 'name:zh'], ['get', 'name']]);
+                        // 逻辑链：优先简体 -> 去斜杠分号后缀 -> 去括号 -> 去空格后缀 -> 兜底原名
+                        const cleanName = ["replace", ["replace", ["replace", ["coalesce", ["get", "name:zh-Hans"], ["get", "name:zh"]], "[\\/;].*$", ""], "[\\(\\)（）]", ""], "\\s+.*$", ""];
+                        map.setLayoutProperty(id, 'text-field', ["case", ["any", ["has", "name:zh-Hans"], ["has", "name:zh"]], cleanName, ["get", "name"]]);
                     }
 
                     // --- 弯度太大的路就不标名字了，省算力 ---
