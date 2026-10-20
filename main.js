@@ -264,14 +264,14 @@ async function applicationMain() {
             lon: v[5] !== null ? v[5] / 1e7 : null
         }));
 
-        // 完美适配并录入 stations.json 中括号结构
-        // 对应索引：[StationID, StationName, StationLevel, RegionCode, LatitudeX1e7, LongitudeX1e7]
+        // 完美适配并录入 stations.json 中括号结构（v2：已删除 RegionCode，坐标降为 1e5 精度）
+        // 对应索引：[StationID, StationName, StationLevel, LatitudeX1e5, LongitudeX1e5]
         STATE.stations = rawStations.map(v => ({
             id: v[0], 
             name: v[1], 
             level: v[2], 
-            lat: v[4] / 1e7, 
-            lon: v[5] / 1e7
+            lat: v[3] / 1e5, 
+            lon: v[4] / 1e5
         }));
 
         // 根据 URL 参数直接在内存中构建等距整点时间轴
