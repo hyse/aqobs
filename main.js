@@ -28,6 +28,15 @@ function closeAllPopups() {
 
 const polList = ['co', 'so2', 'no2', 'o3', 'pm25', 'pm10', 'aqi'];
 
+// 【修复】在模块加载时立即绑定双指捏合缩放防护，覆盖整个加载期（不再等 window.onload）
+window.addEventListener('wheel', (e) => {
+    if (e.ctrlKey) e.preventDefault();
+}, { passive: false }); // 必须为 false，否则 preventDefault 会被浏览器忽略
+
+['gesturestart', 'gesturechange', 'gestureend'].forEach(type => {
+    document.addEventListener(type, (e) => e.preventDefault(), { passive: false });
+});
+
 let map;
 
 // 统一移动设备判定逻辑
@@ -796,20 +805,6 @@ function stepTime(isForward) {
 
 // 全球全域硬件设备键盘事件映射机
 function setupShortcutEvents() {
-    // 1. 精准拦截 Chrome / Edge 触摸板双指捏合导致的“整页放大”（仅针对 ctrlKey 缩放，不影响普通滚轮平移）
-    window.addEventListener('wheel', (e) => {
-        if (e.ctrlKey) {
-            e.preventDefault(); // 封死网页放大，地图 Canvas 内部会自行接管地图级别的缩放
-        }
-    }, { passive: true });
-
-    // 2. 精准拦截 Safari (macOS / iOS) 的原生网页手势放大
-    ['gesturestart', 'gesturechange', 'gestureend'].forEach(type => {
-        document.addEventListener(type, (e) => {
-            e.preventDefault(); // 封死 Safari 网页手势缩放
-        });
-    });
-
     let keyTimers = {};
 
     window.addEventListener('keydown', (e) => {
