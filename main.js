@@ -426,8 +426,26 @@ function updateTopRightUI() {
     if (regionBtn) {
         const hasA = (STATE.urlParams.level || '').endsWith('a');
         regionBtn.innerText = hasA ? 'W' : 'EA';
-        regionBtn.title = hasA ? "当前：叠加全球 (W)" : "当前：仅东亚 (EA)";
+        regionBtn.title = hasA ? "当前：叠加全球 (按 G 切换)" : "当前：仅东亚 (按 G 切换)";
     }
+}
+
+// 切换东亚/全球区域叠加（右上角区域按钮与 G 键共用）
+async function toggleGlobalRegion() {
+    const currentLevel = STATE.urlParams.level || '111';
+    if (currentLevel.endsWith('a')) {
+        STATE.urlParams.level = currentLevel.slice(0, -1);
+    } else {
+        STATE.urlParams.level = currentLevel + 'a';
+    }
+    syncUIStateAndURL();
+    const mask = (STATE.urlParams.level || '').substring(0, 3);
+    if (mask !== '000') {
+        const ts = STATE.isHistory ? STATE.currentTimestamp : STATE.timeTimelineList[STATE.timeTimelineList.length - 1];
+        if (ts) await window.loadHourlyDataFromServer(ts);
+    }
+    renderMapMarkers();
+    updateTopRightUI();
 }
 
 // 精密分段线性内插分值算法引擎
@@ -843,8 +861,13 @@ function setupShortcutEvents() {
         if (k === 'P') {
             e.preventDefault();
             STATE.urlParams.proj = STATE.urlParams.proj === '3d' ? '2d' : '3d';
-            updateMapProjection(); // 切换后再统一更新
+            updateMapProjection();
             pushStateToURL();
+            updateTopRightUI();   // 【新增】同步右上角投影按钮的图标与 title
+        }
+        if (k === 'G') {
+            e.preventDefault();
+            toggleGlobalRegion(); // 【新增】与右上角最下方区域按钮完全等价
         }
         if (k === 'R') { e.preventDefault(); enterRealtimeView(); }
         if (k === 'T') { e.preventDefault(); triggerBtn.click(); }
@@ -1387,22 +1410,9 @@ document.getElementById('proj-trigger').onclick = (e) => {
     pushStateToURL();
     updateTopRightUI();
 };
-document.getElementById('region-trigger').onclick = async (e) => {
+document.getElementById('region-trigger').onclick = (e) => {
     e.stopPropagation();
-    const currentLevel = STATE.urlParams.level || '111';
-    if (currentLevel.endsWith('a')) {
-        STATE.urlParams.level = currentLevel.slice(0, -1);
-    } else {
-        STATE.urlParams.level = currentLevel + 'a';
-    }
-    syncUIStateAndURL();
-    const mask = (STATE.urlParams.level || '').substring(0, 3);
-    if (mask !== '000') {
-        const ts = STATE.isHistory ? STATE.currentTimestamp : STATE.timeTimelineList[STATE.timeTimelineList.length - 1];
-        if (ts) await window.loadHourlyDataFromServer(ts);
-    }
-    renderMapMarkers();
-    updateTopRightUI();
+    toggleGlobalRegion();
 };
 infoModal.onclick = (e) => e.stopPropagation();
 document.addEventListener('click', () => { infoModal.style.display = 'none'; });
@@ -1410,7 +1420,7 @@ document.addEventListener('click', () => { infoModal.style.display = 'none'; });
 const helpTexts = [
     "<h4>aqobs 系统概述</h4><p>高时效、全收集、全公开、免登录，美丽、强大、不老不死的空气质量聚合平台。</p>",
     "<h4>数据源</h4><p>各地公开的空气质量发布网页、应用等。</p>",
-    "<h4>快捷键列表</h4><ul><li><b>W / S</b> : 上下循环选择显示指标 (CO~AQI)</li><li><b>Q / E</b> : 升降轮换多国 AQI 标准</li><li><b>A / D</b> : 历史时序向后/向前回溯（长按触发自动放映）</li><li><b>P</b> : 切换平面地图与立体地球仪</li><li><b>T</b> : 唤醒/隐藏时间整点下拉选择网格</li><li><b>R</b> : 一键消除时轴切回实时追踪视图</li><li><b>I</b> : 弹出/关闭本系统说明看板</li></ul>",
+    "<h4>快捷键列表</h4><ul><li><b>W / S</b> : 上下循环选择显示指标 (CO~AQI)</li><li><b>Q / E</b> : 升降轮换多国 AQI 标准</li><li><b>A / D</b> : 历史时序向后/向前回溯（长按触发自动放映）</li><li><b>P</b> : 切换平面地图与立体地球仪</li><li><b>G</b> : 切换「仅东亚 / 叠加全球」站点显示</li><li><b>T</b> : 唤醒/隐藏时间整点下拉选择网格</li><li><b>R</b> : 一键消除时轴切回实时追踪视图</li><li><b>I</b> : 弹出/关闭本系统说明看板</li></ul>",
     "<h4>关于</h4><p>aqobs :: 空气质量地图 v0.3<br/>High-Resolution Air Quality Observatory System<br/>AWS Cloudflare GitHub</p>"
 ];
 
